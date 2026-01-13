@@ -6,52 +6,107 @@ import {
   Text,
   Title2,
   Divider,
+  Tab,
+  TabList,
+  Badge
 } from '@fluentui/react-components';
 import {
   FileCode,
   Layout,
   Database,
-  Maximize2
+  Maximize2,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import { parsePowerYAML } from './utils/parser';
+import { validatePowerAppStart, type ValidationError } from './utils/validator';
 import ControlMapper from './components/ControlMapper';
 import './index.css';
 
 const DEFAULT_YAML = `
-Screen1 As screen:
-    Fill: =RGBA(255, 255, 255, 1)
-    
-    Label1 As label:
-        Text: ="Welcome to PowerYAML Previewer"
-        X: 40
-        Y: 60
-        Width: 300
-        Height: 50
-        Size: 24
-        
-    Button1 As button:
-        Text: ="Click Me"
-        X: 40
-        Y: 150
-        Width: 160
-        Height: 40
-        
-    Input1 As textinput:
-        Default: ="Sample input"
-        X: 40
-        Y: 210
-        Width: 280
-        Height: 40
+Screens:
+  ConsultarDIs:
+    Properties:
+      Fill: =RGBA(243, 242, 241, 1)
+      LoadingSpinnerColor: =RGBA(56, 96, 178, 1)
+      OnVisible: =Set(ButonRefreshDisabled, DisplayMode.Edit) && Set(ModalLoadingVisible, false);Set(misDocumentos, Filter('Documentos de Identificación de Residuos',  'Creado por'.Email = User().Email, Estado.Value = "Borrador"));
+    Children:
+      - Footer_2:
+          Control: GroupContainer@1.4.0
+          Variant: ManualLayout
+          Properties:
+            DropShadow: =DropShadow.None
+            Fill: =RGBA(255, 255, 255, 1)
+            Height: =60
+            RadiusBottomLeft: =0
+            RadiusBottomRight: =0
+            RadiusTopLeft: =0
+            RadiusTopRight: =0
+            Width: =1366
+            Y: =708
+          Children:
+            - RectangleObra:
+                Control: Rectangle@2.3.0
+                Properties:
+                  BorderColor: =RGBA(0, 18, 107, 1)
+                  Fill: =RGBA(137, 207, 240, 1)
+                  Height: =12
+                  Width: =94
+                  X: =1058
+                  Y: =13
+            - RectangleVertedero:
+                Control: Rectangle@2.3.0
+                Properties:
+                  BorderColor: =RGBA(0, 18, 107, 1)
+                  Fill: =RGBA(144, 238, 144, 1)
+                  Height: =12
+                  Width: =94
+                  X: =1058
+                  Y: =36
+            - LabelObra:
+                Control: Label@2.5.1
+                Properties:
+                  BorderColor: =RGBA(0, 18, 107, 1)
+                  Font: =Font.'Open Sans'
+                  Height: =25
+                  Size: =12
+                  Text: ="Obra"
+                  X: =1157
+                  Y: =6
+            - LabelVertedero:
+                Control: Label@2.5.1
+                Properties:
+                  BorderColor: =RGBA(0, 18, 107, 1)
+                  Font: =Font.'Open Sans'
+                  Height: =25
+                  Size: =12
+                  Text: ="Vertedero"
+                  X: =1157
+                  Y: =29
 `;
 
 const App: React.FC = () => {
   const [yamlContent, setYamlContent] = useState<string>(DEFAULT_YAML);
   const [mockData, setMockData] = useState<string>('{\n  "Items": []\n}');
   const [parsedData, setParsedData] = useState<any>(null);
+  const [validationIssues, setValidationIssues] = useState<ValidationError[]>([]);
+  const [activeTab, setActiveTab] = useState<string>('inspector');
 
-  useEffect(() => {
+  const processYaml = () => {
     const data = parsePowerYAML(yamlContent);
     setParsedData(data);
+
+    if (data) {
+      const issues = validatePowerAppStart(data);
+      setValidationIssues(issues);
+      // Auto-switch to issues tab if there are errors (optional, maybe just show badge)
+    } else {
+      setValidationIssues([]);
+    }
+  };
+
+  useEffect(() => {
+    processYaml();
   }, [yamlContent]);
 
   return (
@@ -65,8 +120,15 @@ const App: React.FC = () => {
           </header>
           <div className="pane-content">
             <Title2>Editor</Title2>
-            <div style={{ marginTop: '20px', marginBottom: '10px' }}>
+            <div style={{ marginTop: '20px', marginBottom: '10px', display: 'flex', gap: '8px' }}>
               <Button appearance="primary">Open Local YAML</Button>
+              <Button
+                icon={<RefreshCw size={16} />}
+                onClick={processYaml}
+                title="Refresh & Validate"
+              >
+                Refresh
+              </Button>
             </div>
 
             <textarea
@@ -118,7 +180,7 @@ const App: React.FC = () => {
             </div>
           </header>
 
-          <div className="canvas-container" style={{ width: '375px', height: '667px' }}>
+          <div className="canvas-container" style={{ width: '1366px', height: '768px', overflow: 'hidden' }}>
             {parsedData && Object.keys(parsedData).map(key => (
               <ControlMapper key={key} control={parsedData[key]} />
             ))}
@@ -133,20 +195,67 @@ const App: React.FC = () => {
         <aside className="pane pane-right">
           <header className="pane-header">
             <Database size={20} />
-            <Text weight="semibold">YAML Tree Inspector</Text>
+            <Text weight="semibold">YAML Inspector</Text>
           </header>
-          <div className="pane-content">
-            <div style={{
-              backgroundColor: '#111',
-              padding: '10px',
-              borderRadius: '4px',
-              fontFamily: 'monospace',
-              fontSize: '12px',
-              height: '100%',
-              overflow: 'auto'
-            }}>
-              <pre>{JSON.stringify(parsedData, null, 2)}</pre>
-            </div>
+
+          <div style={{ padding: '0 10px' }}>
+            <TabList selectedValue={activeTab} onTabSelect={(_, data) => setActiveTab(data.value as string)}>
+              <Tab value="inspector">Tree</Tab>
+              <Tab value="issues">
+                Issues
+                {validationIssues.length > 0 && (
+                  <Badge appearance="filled" color="danger" style={{ marginLeft: '5px' }}>
+                    {validationIssues.length}
+                  </Badge>
+                )}
+              </Tab>
+            </TabList>
+          </div>
+
+          <div className="pane-content" style={{ marginTop: '0' }}>
+            {activeTab === 'inspector' && (
+              <div style={{
+                backgroundColor: '#111',
+                padding: '10px',
+                borderRadius: '4px',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                height: '100%',
+                overflow: 'auto'
+              }}>
+                <pre>{JSON.stringify(parsedData, null, 2)}</pre>
+              </div>
+            )}
+
+            {activeTab === 'issues' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px 0' }}>
+                {validationIssues.length === 0 ? (
+                  <Text style={{ color: '#888', fontStyle: 'italic' }}>No issues found.</Text>
+                ) : (
+                  validationIssues.map((issue, idx) => (
+                    <div key={idx} style={{
+                      backgroundColor: '#2a1a1a',
+                      borderLeft: '3px solid #f44336',
+                      padding: '8px',
+                      borderRadius: '2px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <AlertTriangle size={14} color="#f44336" />
+                        <Text weight="semibold" style={{ color: '#ff8a80', fontSize: '12px' }}>
+                          {issue.type === 'unknown_control' ? 'Unknown Control' : 'Unknown Property'}
+                        </Text>
+                      </div>
+                      <Text style={{ display: 'block', fontSize: '12px', marginBottom: '2px' }}>
+                        {issue.message}
+                      </Text>
+                      <Text style={{ display: 'block', fontSize: '10px', color: '#888', fontFamily: 'monospace' }}>
+                        Path: {issue.path}
+                      </Text>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </aside>
       </div>

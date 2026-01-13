@@ -4,7 +4,18 @@ import {
     LabelRenderer,
     ButtonRenderer,
     TextInputRenderer,
-    RectangleRenderer
+    RectangleRenderer,
+    IconRenderer,
+    ImageRenderer,
+    GalleryRenderer,
+    DatePickerRenderer,
+    CircleRenderer,
+    GroupContainerRenderer,
+    DropdownRenderer,
+    FormRenderer,
+    TypedDataCardRenderer,
+    ComboboxRenderer,
+    ScreenRenderer
 } from './renderers/BasicRenderers';
 
 interface ControlMapperProps {
@@ -18,10 +29,11 @@ const ControlMapper: React.FC<ControlMapperProps> = ({ control }) => {
 
     // Extract common positioning props
     const positionProps = {
-        x: control.X,
-        y: control.Y,
-        width: control.Width,
-        height: control.Height,
+        x: type === 'screen' ? 0 : control.X,
+        y: type === 'screen' ? 0 : control.Y,
+        width: type === 'screen' ? '100%' : control.Width,
+        height: type === 'screen' ? '100%' : control.Height,
+        name: control.ControlName // Pass control name
     };
 
     let Renderer = null;
@@ -36,9 +48,41 @@ const ControlMapper: React.FC<ControlMapperProps> = ({ control }) => {
         case 'textinput':
             Renderer = <TextInputRenderer props={control} />;
             break;
+        case 'icon':
+            Renderer = <IconRenderer props={control} />;
+            break;
+        case 'image':
+            Renderer = <ImageRenderer props={control} />;
+            break;
+        case 'gallery':
+            Renderer = <GalleryRenderer props={control} />;
+            break;
+        case 'datepicker':
+            Renderer = <DatePickerRenderer props={control} />;
+            break;
         case 'rectangle':
-        case 'groupcontainer':
             Renderer = <RectangleRenderer props={control} />;
+            break;
+        case 'groupcontainer':
+            Renderer = <GroupContainerRenderer props={control} />;
+            break;
+        case 'dropdown':
+            Renderer = <DropdownRenderer props={control} />;
+            break;
+        case 'combobox':
+            Renderer = <ComboboxRenderer props={control} />;
+            break;
+        case 'form':
+            Renderer = <FormRenderer props={control} />;
+            break;
+        case 'typeddatacard':
+            Renderer = <TypedDataCardRenderer props={control} />;
+            break;
+        case 'screen':
+            Renderer = <ScreenRenderer props={control} />;
+            break;
+        case 'circle':
+            Renderer = <CircleRenderer props={control} />;
             break;
         default:
             Renderer = (

@@ -5,6 +5,7 @@ interface PositionWrapperProps {
     y?: number | string;
     width?: number | string;
     height?: number | string;
+    name?: string;
     children: React.ReactNode;
 }
 
@@ -13,6 +14,7 @@ const PositionWrapper: React.FC<PositionWrapperProps> = ({
     y = 0,
     width = 'auto',
     height = 'auto',
+    name,
     children
 }) => {
     // Simple conversion: if it's a number, add px. If it's a string (like a formula), we'll deal with it later.
@@ -23,9 +25,10 @@ const PositionWrapper: React.FC<PositionWrapperProps> = ({
         width: typeof width === 'number' ? `${width}px` : width,
         height: typeof height === 'number' ? `${height}px` : height,
         boxSizing: 'border-box',
+        overflow: 'hidden', // Clip content for containers
     };
 
-    return <div style={style}>{children}</div>;
+    return <div style={style} data-control-name={name}>{children}</div>;
 };
 
 export default PositionWrapper;

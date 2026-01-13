@@ -71,3 +71,9 @@ export default defineConfig([
   },
 ])
 ```
+
+You can run the project with:
+
+```bash
+npm run dev
+```
