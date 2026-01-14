@@ -9,8 +9,30 @@ import {
     CheckmarkRegular,
     ArrowDownloadRegular,
     EditRegular,
-    StarRegular
+    StarRegular,
+    // PowerApps Icons
+    SearchRegular,
+    AddRegular,
+    DeleteRegular,
+    SaveRegular,
+    PersonRegular,
 } from '@fluentui/react-icons';
+import { ImageUpload } from './ImageUpload';
+
+const ICON_MAP: Record<string, React.FC<any>> = {
+    'icon.chevronleft': ChevronLeftRegular,
+    'icon.chevronright': ChevronRightRegular,
+    'icon.cancel': DismissRegular,
+    'icon.check': CheckmarkRegular,
+    'icon.download': ArrowDownloadRegular,
+    'icon.edit': EditRegular,
+    'icon.add': AddRegular,
+    'icon.delete': DeleteRegular,
+    'icon.save': SaveRegular,
+    'icon.search': SearchRegular,
+    'icon.person': PersonRegular,
+    // Add more mappings as needed
+};
 
 export const DropdownRenderer: React.FC<{ props: any }> = ({ props }) => (
     <Dropdown
@@ -68,38 +90,52 @@ export const ComboboxRenderer: React.FC<{ props: any }> = ({ props }) => {
     );
 };
 
-export const LabelRenderer: React.FC<{ props: any }> = ({ props }) => (
-    <Text
-        size={(props.Size ? props.Size * 20 : 400) as any} // Cast to any or match strict Text props
-        style={{
-            color: props.Color || 'black',
-            textAlign: props.Align?.toLowerCase().replace('align.', '') || 'left',
-            display: 'block',
-            width: '100%',
-            height: '100%',
-            fontWeight: props.FontWeight?.includes('Bold') ? 'bold' : 'normal',
+export const LabelRenderer: React.FC<{ props: any }> = ({ props }) => {
+    const verticalAlign = props.VerticalAlign?.toLowerCase().replace('verticalalign.', '') || 'middle';
+    const justifyContent = verticalAlign === 'top' ? 'flex-start' : (verticalAlign === 'bottom' ? 'flex-end' : 'center');
 
-            // New properties
-            backgroundColor: props.Fill || 'transparent',
-            paddingTop: props.PaddingTop ? `${props.PaddingTop}px` : undefined,
-            paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
-            paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
-            paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
-            border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
-            cursor: props.OnSelect ? 'pointer' : 'default',
-            whiteSpace: props.Wrap ? 'normal' : 'nowrap', // Handle Wrap property
-            overflow: props.Wrap ? 'visible' : 'hidden', // Assuming if wrapped we show it, else crop
-            textOverflow: props.Wrap ? 'clip' : 'ellipsis'
-        }}
-        onClick={props.OnSelect ? () => {
-            console.log('Label OnSelect triggered');
-            if (props._onAction) props._onAction(props.OnSelect);
-        } : undefined}
-        aria-live={props.Live} // Handle Live property
-    >
-        {props.Text || ''}
-    </Text>
-);
+    const textAlign = props.Align?.toLowerCase().replace('align.', '') || 'left';
+    const alignItems = textAlign === 'center' ? 'center' : (textAlign === 'right' ? 'flex-end' : 'flex-start');
+
+    return (
+        <div
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: justifyContent,
+                alignItems: alignItems,
+                height: '100%',
+                width: '100%',
+                overflow: 'hidden',
+                backgroundColor: props.Fill || 'transparent',
+                paddingTop: props.PaddingTop ? `${props.PaddingTop}px` : undefined,
+                paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
+                paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
+                paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
+                border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
+                cursor: props.OnSelect ? 'pointer' : 'default',
+            }}
+            onClick={props.OnSelect ? () => {
+                if (props._onAction) props._onAction(props.OnSelect);
+            } : undefined}
+        >
+            <Text
+                size={(props.Size ? props.Size * 20 : 400) as any}
+                style={{
+                    color: props.Color || 'black',
+                    textAlign: textAlign as any,
+                    fontWeight: props.FontWeight?.includes('Bold') ? 'bold' : 'normal',
+                    whiteSpace: props.Wrap ? 'normal' : 'nowrap',
+                    textOverflow: props.Wrap ? 'clip' : 'ellipsis',
+                    width: textAlign === 'left' ? 'auto' : '100%',
+                }}
+                aria-live={props.Live}
+            >
+                {props.Text || ''}
+            </Text>
+        </div>
+    );
+};
 
 export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
     const [isHovered, setIsHovered] = React.useState(false);
@@ -122,6 +158,12 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
     else if (isHovered && props.HoverColor) effectiveColor = props.HoverColor;
 
 
+    const iconName = props.Icon?.toLowerCase();
+    const IconComponent = iconName ? (ICON_MAP[iconName] || ICON_MAP[iconName.replace('icon.', '')] || StarRegular) : null;
+
+    const fontSize = props.FontSize || (props.Size ? props.Size * 2 : 14);
+    const fontWeight = props.FontWeight?.toLowerCase().includes('bold') ? 'bold' : (props.FontWeight?.toLowerCase().includes('semibold') ? '600' : 'normal');
+
     return (
         <FluentButton
             appearance={effectiveFill === 'transparent' ? 'transparent' : 'primary'}
@@ -129,6 +171,7 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
             onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
             onMouseDown={() => setIsPressed(true)}
             onMouseUp={() => setIsPressed(false)}
+            icon={IconComponent ? <IconComponent /> : undefined}
             onClick={() => {
                 if (props.OnSelect && props._onAction) {
                     props._onAction(props.OnSelect);
@@ -139,7 +182,12 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
                 height: '100%',
                 backgroundColor: effectiveFill !== 'transparent' ? effectiveFill : undefined,
                 color: effectiveColor || undefined,
-                border: (props.BorderThickness > 0 && effectiveBorderColor) ? `${props.BorderThickness}px solid ${effectiveBorderColor}` : 'none'
+                border: (props.BorderThickness > 0 && effectiveBorderColor) ? `${props.BorderThickness}px solid ${effectiveBorderColor}` : 'none',
+                fontSize: typeof fontSize === 'number' ? `${fontSize}px` : fontSize,
+                fontWeight: fontWeight as any,
+                display: 'flex',
+                alignItems: props.VerticalAlign?.toLowerCase().includes('bottom') ? 'flex-end' : (props.VerticalAlign?.toLowerCase().includes('top') ? 'flex-start' : 'center'),
+                justifyContent: props.Align?.toLowerCase().includes('right') ? 'flex-end' : (props.Align?.toLowerCase().includes('left') ? 'flex-start' : 'center'),
             }}
         >
             {props.Text ?? 'Button'}
@@ -243,22 +291,25 @@ export const GroupContainerRenderer: React.FC<{ props: any; children?: React.Rea
             boxShadow: props.DropShadow,
             overflowY: props.LayoutOverflowY === 'Scroll' ? 'auto' : (props.LayoutOverflowY === 'Hidden' ? 'hidden' : 'visible'),
 
-            // Flex properties for children? 
-            // Note: Children are rendered by ControlMapper. 
-            // If this is an AutoLayout container, ControlMapper might need to adjust, 
-            // but often the renderer just provides the box. 
-            // The validator mentioned FillPortions, which is a property on Children usually (flex-grow).
-            // If this container is a Flex container, we might want to set display flex.
+            // Flex properties for children
             display: props.Variant === 'AutoLayout' ? 'flex' : 'block',
-            flexDirection: props.LayoutDirection === 'Vertical' ? 'column' : 'row',
-            alignItems: props.LayoutAlignItems, // Map 'Stretch', 'Center', etc. if needed
-            justifyContent: props.LayoutJustifyContent,
-            gap: props.LayoutGap ? `${props.LayoutGap}px` : undefined,
+            flexDirection: (props.LayoutDirection?.toLowerCase().includes('vertical') ? 'column' : 'row') as any,
+            alignItems: (props.LayoutAlignItems?.toLowerCase().includes('center') ? 'center' :
+                (props.LayoutAlignItems?.toLowerCase().includes('stretch') ? 'stretch' :
+                    (props.LayoutAlignItems?.toLowerCase().includes('start') ? 'flex-start' :
+                        (props.LayoutAlignItems?.toLowerCase().includes('end') ? 'flex-end' : undefined)))) as any,
+            justifyContent: (props.LayoutJustifyContent?.toLowerCase().includes('center') ? 'center' :
+                (props.LayoutJustifyContent?.toLowerCase().includes('start') ? 'flex-start' :
+                    (props.LayoutJustifyContent?.toLowerCase().includes('end') ? 'flex-end' :
+                        (props.LayoutJustifyContent?.toLowerCase().includes('spacebetween') ? 'space-between' : undefined)))) as any,
+            gap: props.LayoutGap ? (typeof props.LayoutGap === 'number' ? `${props.LayoutGap}px` : props.LayoutGap) : undefined,
 
             paddingTop: props.PaddingTop ? `${props.PaddingTop}px` : undefined,
             paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
             paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
             paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
+            flexWrap: props.LayoutWrap ? 'wrap' : 'nowrap',
+            overflow: props.LayoutOverflowY === 'Scroll' ? 'auto' : 'hidden', // Default to hidden for containers
         }}>
             {children}
         </div>
@@ -274,6 +325,7 @@ export const ScreenRenderer: React.FC<{ props: any; children?: React.ReactNode }
         backgroundSize: props.ImagePosition === 'Fill' ? 'cover' : (props.ImagePosition === 'Fit' ? 'contain' : 'auto'),
         backgroundRepeat: 'no-repeat',
         backgroundPosition: 'center',
+        overflow: 'hidden',
     }}
         onClick={() => {
             if (props.OnSelect && props._onAction) {
@@ -322,19 +374,11 @@ export const DatePickerRenderer: React.FC<{ props: any }> = ({ props }) => {
 
 // --- New Renderers ---
 
-const ICON_MAP: Record<string, React.FC<any>> = {
-    'icon.chevronleft': ChevronLeftRegular,
-    'icon.chevronright': ChevronRightRegular,
-    'icon.cancel': DismissRegular,
-    'icon.check': CheckmarkRegular,
-    'icon.download': ArrowDownloadRegular,
-    'icon.edit': EditRegular,
-    // Add more mappings as needed
-};
+
 
 export const IconRenderer: React.FC<{ props: any }> = ({ props }) => {
     const iconName = props.Icon?.toLowerCase();
-    const IconComponent = ICON_MAP[iconName] || StarRegular; // Default to star if unknown
+    const IconComponent = ICON_MAP[iconName] || ICON_MAP[iconName?.replace('icon.', '')] || StarRegular; // Default to star if unknown
 
     return (
 
@@ -342,6 +386,7 @@ export const IconRenderer: React.FC<{ props: any }> = ({ props }) => {
             onClick={() => {
                 if (props.OnSelect && props._onAction) props._onAction(props.OnSelect);
             }}
+            title={props.Tooltip}
             style={{
                 color: props.Color || 'inherit',
                 width: '100%',
@@ -357,29 +402,89 @@ export const IconRenderer: React.FC<{ props: any }> = ({ props }) => {
     );
 };
 
-export const ImageRenderer: React.FC<{ props: any }> = ({ props }) => {
+
+
+export const ImageRenderer: React.FC<{
+    props: any;
+    appId?: string | null;
+    appImages?: any[];
+    onUploadSuccess?: (img: any) => void
+}> = ({ props, appId, appImages, onUploadSuccess }) => {
+    const [hasError, setHasError] = React.useState(false);
     let src = props.Image;
-    // Simple cleanup for the complex formula string provided by user
-    // e.g. " \"data:image/svg+xml; ... \" & EncodeUrl(...)"
-    // We just want to see if we can extract the data uri.
-    if (typeof src === 'string' && src.includes('data:image')) {
-        const start = src.indexOf('data:image');
-        const end = src.indexOf('"', start);
-        if (end > start) {
-            src = src.substring(start, end);
-        } else if (src.includes('&')) {
-            // Heuristic: take everything before the first & if it looks like a string
-            // But actually user string is: "data... " & EncodeUrl(...)
-            // The EncodeUrl part implies the SVG is invalid uri component encoded? 
-            // Actually browsers handle data:image/svg+xml;utf-8,<svg...> often without full encoding if simple.
-            // But let's try to extract the SVG content if it's there.
-            // For now, let's just try to clean quotes.
-            // If we can't parse it easily, show placeholder.
+    const imageName = typeof src === 'string' ? src : props.ControlName;
+
+    // Resolve named images from appImages
+    if (typeof src === 'string' && appImages) {
+        const syncedImage = appImages.find(img => img.name === src);
+        if (syncedImage) {
+            src = syncedImage.url;
         }
     }
 
-    // If it's a complicated formula, show placeholder icon
-    if (typeof src === 'string' && src.includes('&')) {
+    // Simple cleanup for the complex formula string provided by user
+    if (typeof src === 'string' && src.includes('data:image')) {
+        // If it starts with data: but has trailing quotes or junk from a raw formula pick, clean it.
+        // However, we should be careful NOT to truncate if it's a valid complex URI.
+        const start = src.indexOf('data:image');
+        if (start !== -1) {
+            let possibleSrc = src.substring(start);
+            // If it ends with a quote that was part of a larger formula string
+            if (possibleSrc.includes('"')) {
+                const end = possibleSrc.indexOf('"');
+                src = possibleSrc.substring(0, end);
+            } else {
+                src = possibleSrc;
+            }
+        }
+    }
+
+    // If no source and we have appId, show upload dropbox
+    // But ONLY if it's not a formula result (like raw SVG content)
+    const isSvgContent = typeof src === 'string' && src.trim().startsWith('<svg');
+    const isFormula = typeof src === 'string' && (src.includes('&') || src.includes('('));
+    const isDataUri = typeof src === 'string' && src.startsWith('data:');
+
+    if ((!src || src === imageName) && !isSvgContent && appId) {
+        return (
+            <ImageUpload
+                appId={appId}
+                controlName={props.ControlName}
+                imageName={imageName}
+                onUploadSuccess={(url) => {
+                    if (onUploadSuccess) onUploadSuccess({ name: imageName, url });
+                }}
+            />
+        );
+    }
+
+    if (isSvgContent) {
+        return (
+            <div
+                onClick={() => {
+                    if (props.OnSelect && props._onAction) props._onAction(props.OnSelect);
+                }}
+                style={{
+                    width: '100%',
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: props.Fill || 'transparent',
+                    paddingTop: props.PaddingTop ? `${props.PaddingTop}px` : undefined,
+                    paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
+                    paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
+                    paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
+                    border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
+                    cursor: props.OnSelect ? 'pointer' : 'default',
+                    overflow: 'hidden'
+                }}
+                dangerouslySetInnerHTML={{ __html: src }}
+            />
+        );
+    }
+
+    if (isFormula && !isDataUri) {
         return (
             <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f0f0f0', border: '1px solid #ccc' }}>
                 <ImageRegular style={{ fontSize: 24, color: '#999' }} />
@@ -387,10 +492,28 @@ export const ImageRenderer: React.FC<{ props: any }> = ({ props }) => {
         );
     }
 
+    if (hasError) {
+        return (
+            <div style={{
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'rgba(255,0,0,0.05)',
+                border: '1px solid rgba(255,0,0,0.2)',
+                fontSize: '10px',
+                color: '#d13438'
+            }}>
+                [Image Error]
+            </div>
+        );
+    }
+
     return (
         <img
             src={src}
-            alt="Control"
+            alt={imageName || "Control"}
             onClick={() => {
                 if (props.OnSelect && props._onAction) props._onAction(props.OnSelect);
             }}
@@ -410,9 +533,8 @@ export const ImageRenderer: React.FC<{ props: any }> = ({ props }) => {
                 border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
                 cursor: props.OnSelect ? 'pointer' : 'default'
             }}
-            onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-                (e.target as HTMLImageElement).parentElement!.innerText = '[Image Error]';
+            onError={() => {
+                setHasError(true);
             }}
         />
     );
@@ -451,7 +573,7 @@ export const TypedDataCardRenderer: React.FC<{ props: any; children?: React.Reac
 );
 
 // Minimal Gallery support: Renders the template once (or multiple times if we had real data binding)
-export const GalleryRenderer: React.FC<{ props: any }> = ({ props }) => {
+export const GalleryRenderer: React.FC<{ props: any; children?: React.ReactNode }> = ({ props, children }) => {
     // Gallery has _Children which usually represent the template
     // It also has 'TemplateSize' (height of item)
     // We can simulate a few items.
@@ -493,6 +615,7 @@ export const GalleryRenderer: React.FC<{ props: any }> = ({ props }) => {
            */}
             <div style={{ position: 'relative', height: templateHeight * 1, width: '100%' }}>
                 {/* This is where the children will naturally fall if they are absolute positioned */}
+                {children}
             </div>
             {/* Visual cue that it is a gallery */}
             <div style={{ padding: 4, position: 'absolute', right: 0, top: 0, background: 'rgba(0,0,0,0.1)', fontSize: 10 }}>

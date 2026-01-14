@@ -3,30 +3,60 @@ import { executePowerFxAction, evaluateExpression, type PowerFxContextState } fr
 
 interface PowerFxContextValue {
     variables: PowerFxContextState;
+    controls: Record<string, any>;
     execute: (action: string) => void;
-    evaluate: (expression: string) => any;
+    evaluate: (expression: string, self?: any, parent?: any) => any;
+    registerControl: (name: string, props: any) => void;
     reset: () => void;
 }
 
 const PowerFxContext = createContext<PowerFxContextValue | undefined>(undefined);
 
-export const PowerFxProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+interface PowerFxProviderProps {
+    children: ReactNode;
+    onNavigate?: (screenName: string) => void;
+    onNotify?: (message: string) => void;
+}
+
+export const PowerFxProvider: React.FC<PowerFxProviderProps> = ({ children, onNavigate, onNotify }) => {
     const [variables, setVariables] = useState<PowerFxContextState>({});
+    const [controls, setControls] = useState<Record<string, any>>({});
 
-    const execute = (action: string) => {
-        setVariables(prev => executePowerFxAction(action, prev));
-    };
+    const execute = React.useCallback((action: string) => {
+        setVariables(prev => executePowerFxAction(action, prev, onNavigate, onNotify));
+    }, [onNavigate, onNotify]);
 
-    const evaluate = (expression: string) => {
-        return evaluateExpression(expression, variables);
-    };
+    const evaluate = React.useCallback((expression: string, self?: any, parent?: any) => {
+        return evaluateExpression(expression, { ...variables, ...controls, Self: self, Parent: parent });
+    }, [variables, controls]);
 
-    const reset = () => {
+    const registerControl = React.useCallback((name: string, props: any) => {
+        setControls(prev => {
+            // Check if props are actually different to prevent unnecessary re-renders
+            if (JSON.stringify(prev[name]) === JSON.stringify(props)) return prev;
+            return {
+                ...prev,
+                [name]: props
+            };
+        });
+    }, []);
+
+    const reset = React.useCallback(() => {
         setVariables({});
-    };
+        setControls({});
+    }, []);
+
+    const value = React.useMemo(() => ({
+        variables,
+        controls,
+        execute,
+        evaluate,
+        registerControl,
+        reset
+    }), [variables, controls, execute, evaluate, registerControl, reset]);
 
     return (
-        <PowerFxContext.Provider value={{ variables, execute, evaluate, reset }}>
+        <PowerFxContext.Provider value={value}>
             {children}
         </PowerFxContext.Provider>
     );

@@ -5,6 +5,9 @@ interface PositionWrapperProps {
     y?: number | string;
     width?: number | string;
     height?: number | string;
+    minWidth?: number | string;
+    minHeight?: number | string;
+    fillPortions?: number;
     name?: string;
     isHighlighted?: boolean;
     isParentAutoLayout?: boolean;
@@ -16,6 +19,9 @@ const PositionWrapper: React.FC<PositionWrapperProps> = ({
     y = 0,
     width = 'auto',
     height = 'auto',
+    minWidth,
+    minHeight,
+    fillPortions = 0,
     name,
     isHighlighted,
     isParentAutoLayout,
@@ -28,15 +34,21 @@ const PositionWrapper: React.FC<PositionWrapperProps> = ({
         top: isParentAutoLayout ? undefined : (typeof y === 'number' ? `${y}px` : y),
         width: typeof width === 'number' ? `${width}px` : width,
         height: typeof height === 'number' ? `${height}px` : height,
+        minWidth: typeof minWidth === 'number' ? `${minWidth}px` : minWidth,
+        minHeight: typeof minHeight === 'number' ? `${minHeight}px` : minHeight,
+        flex: isParentAutoLayout ? (fillPortions > 0 ? `${fillPortions} 1 0%` : (width === 'auto' && height === 'auto' ? 1 : 'none')) : undefined,
+        alignSelf: isParentAutoLayout ? 'stretch' : undefined,
         boxSizing: 'border-box',
-        overflow: 'visible', // Visible to show outline if needed? But clip content is good. Outline is outside usually.
+        overflow: 'hidden',
         // Actually for highlighting we might want z-index.
         zIndex: isHighlighted ? 1000 : undefined,
         outline: isHighlighted ? '1px solid red' : 'none',
         boxShadow: isHighlighted ? '0 0 10px rgba(255, 0, 0, 0.3)' : 'none',
-        // If it is in a flex container, we might want to respect flex properties if provided?
-        // But for now, just following width/height and flow is enough.
     };
+
+    if (name === 'ContainerHeader') {
+        console.log(`[DEBUG] PositionWrapper ${name}: fillPortions=${fillPortions}, width=${width}, height=${height}, flex=${style.flex}`);
+    }
 
     return <div style={style} data-control-name={name}>{children}</div>;
 };

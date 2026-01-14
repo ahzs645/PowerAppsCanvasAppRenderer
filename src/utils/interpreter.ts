@@ -87,42 +87,140 @@ export const executePowerFxAction = (
     return newState;
 };
 
-/**
- * Evaluates a return value expression (e.g. Visible: =varBool).
- */
 export const evaluateExpression = (expression: string, context: PowerFxContextState): any => {
+    // 1. If the input is a raw Data URI for an SVG, extract and decode just the SVG content
+    if (typeof expression === 'string' && expression.startsWith('data:image/svg+xml')) {
+        // console.log(`[DEBUG] evaluateExpression: raw data URI detected, extracting SVG`);
+
+        const commaIndex = expression.indexOf(',');
+        if (commaIndex !== -1) {
+            const rawData = expression.substring(commaIndex + 1);
+            try {
+                // decodeURIComponent turns %3Csvg into <svg
+                return decodeURIComponent(rawData);
+            } catch (e) {
+                // console.error("Failed to decode SVG data", e);
+                return rawData; // Fallback to raw if decoding fails
+            }
+        }
+        return expression;
+    }
+
+    // 2. Otherwise, evaluate as normal
+    let result = _evaluateExpressionInternal(expression, context);
+
+    // 3. Check result (in case a formula returned a string)
+    const isDataUri = typeof result === 'string' && (result.startsWith('data:') || result.startsWith('"data:'));
+    if (isDataUri) return result;
+
+    // 4. Wrap math expressions in calc()
+    if (typeof result === 'string' && (result.includes('%') || result.includes('px')) && /[+\-*/]/.test(result) && !result.startsWith('calc(')) {
+        if (/\d+(px|%)\s*[+\-*/]/.test(result)) {
+            result = `calc(${result})`;
+        }
+    }
+
+    if (expression.includes('Parent.Width') || expression.includes('Self.Width')) {
+        // console.log(`[DEBUG] evaluateExpression: expr="${expression}", result="${result}"`);
+    }
+
+    return result;
+};
+
+const _evaluateExpressionInternal = (expression: string, context: PowerFxContextState): any => {
     let expr = expression.trim();
     if (expr.startsWith('=')) {
         expr = expr.substring(1).trim();
     }
 
-    // 1. Boolean Literals
+    if (!expr) return expr;
+
+    // 1. Handle calc() wrapper (often comes from parser.ts)
+    if (expr.toLowerCase().startsWith('calc(') && expr.endsWith(')')) {
+        expr = expr.substring(5, expr.length - 1).trim();
+    }
+
+    // Strip top-level parentheses if they wrap the entire expression
+    while (expr.startsWith('(') && expr.endsWith(')')) {
+        // Only strip if they are matching: (A) + (B) should not be stripped to A) + (B
+        let depth = 0;
+        let mismatch = false;
+        for (let i = 0; i < expr.length - 1; i++) {
+            if (expr[i] === '(') depth++;
+            else if (expr[i] === ')') depth--;
+            if (depth === 0) {
+                mismatch = true;
+                break;
+            }
+        }
+        if (!mismatch) {
+            expr = expr.substring(1, expr.length - 1).trim();
+        } else {
+            break;
+        }
+    }
+
+    // 2. Boolean Literals
     if (expr.toLowerCase() === 'true') return true;
     if (expr.toLowerCase() === 'false') return false;
 
-    // 2. String Literals
+    // 3. String Literals
     if (expr.startsWith('"') && expr.endsWith('"')) {
         return expr.substring(1, expr.length - 1);
     }
 
-    // 3. Numeric Literals
-    if (/^-?\d+(\.\d+)?$/.test(expr)) {
-        return parseFloat(expr);
+    // Interpolated Strings: $"..."
+    if (expr.startsWith('$"') && expr.endsWith('"')) {
+        return expr.substring(2, expr.length - 1);
     }
 
-    // 4. Variable Lookup
-    // If it's a simple identifier and exists in context
+    // 4. Concatenation: & (lower precedence than math in some contexts, but here we handle it explicitly)
+    // We split by & but skip && (handled by splitActions)
+    const ampParts = splitTopLevel(expr, '&');
+    if (ampParts.length > 1) {
+        return ampParts.map(p => {
+            const part = p.trim();
+            // If it's &&, evaluate it as logic? No, splitActions handled top-level &&.
+            // But internal && might still exist. However, single & is usually concatenation.
+            return String(evaluateExpression(part, context));
+        }).join('');
+    }
+
+    // 4. Numeric Literals with Units
+    const unitMatch = expr.match(/^(-?\d+(\.\d+)?)(px|%|pt|em|rem)?$/);
+    if (unitMatch) {
+        if (unitMatch[3]) return expr; // Preserve string if unit is present
+        return parseFloat(unitMatch[1]);
+    }
+
+    // 5. Dot notation Lookup / Property Access: Object.Property
+    if (expr.includes('.')) {
+        const dotIndex = findLastTopLevelDot(expr);
+        if (dotIndex !== -1) {
+            const lhs = expr.substring(0, dotIndex).trim();
+            const rhs = expr.substring(dotIndex + 1).trim();
+
+            const obj = evaluateExpression(lhs, context);
+            if (obj && typeof obj === 'object') {
+                return obj[rhs] !== undefined ? obj[rhs] : expr;
+            }
+        }
+    }
+
+    // 6. Variable / Control Lookup
     if (/^[a-zA-Z0-9_]+$/.test(expr)) {
         if (context[expr] !== undefined) {
             return context[expr];
         }
-        // If not in context, maybe it's a known global or enum we don't track?
-        // E.g. DisplayMode.Edit -> return string "DisplayMode.Edit" or something
         return expr;
     }
 
-    // 5. Logic Operators: Or(), And(), Not(), !
-    // Handle "!" prefix
+    // 7. Arithmetic: +, -, *, /
+    if (/[+\-*/]/.test(expr)) {
+        return evaluateArithmetic(expr, context);
+    }
+
+    // 8. Logic Operators: Or(), And(), Not(), !
     if (expr.startsWith('!')) {
         const subExpr = expr.substring(1).trim();
         return !evaluateExpression(subExpr, context);
@@ -143,29 +241,101 @@ export const evaluateExpression = (expression: string, context: PowerFxContextSt
             case 'not':
                 return !args[0];
             case 'if':
-                // If(Cond, TrueVal, FalseVal)
                 if (args[0]) return args[1];
                 return args[2];
+            case 'encodeurl':
+                return encodeURIComponent(String(args[0] || ""));
             default:
-                // Fallback: return raw
                 return expr;
         }
     }
 
-    // 6. Inline Logic: A && B, A || B, A = B
-    // Handle strict equality "="
+    // 9. Inline Logic: A && B, A || B, A = B
     if (expr.includes('=')) {
-        // Naive check for "State.Value = 'Borrador'"
-        // We won't fully parse object access yet, but let's handle simple A=B
         const parts = splitTopLevel(expr, '=');
         if (parts.length === 2) {
             const lhs = evaluateExpression(parts[0], context);
             const rhs = evaluateExpression(parts[1], context);
-            return lhs == rhs;
+            return (lhs == rhs);
         }
     }
 
     return expr;
+};
+
+
+/**
+ * Basic arithmetic evaluator for +, -, *, /
+ */
+/**
+ * Basic arithmetic evaluator for +, -, *, /
+ * Now unit-aware: if operands contain units (%, px), it returns a string for CSS calc().
+ */
+const evaluateArithmetic = (expression: string, context: PowerFxContextState): any => {
+    const processOp = (parts: string[], op: string, identity: number, calcFn: (a: number, b: number) => number) => {
+        let hasUnit = false;
+        const evaluated = parts.map(p => {
+            const val = evaluateExpression(p.trim(), context);
+            if (typeof val === 'string' && (val.includes('%') || val.includes('px') || val.includes('calc') || val.includes('('))) {
+                hasUnit = true;
+            }
+            return val;
+        });
+
+        if (hasUnit) {
+            const joined = evaluated.map(v => {
+                // If it's a number, it's likely a dimension. 
+                // In CSS calc, addition/subtraction must have units on BOTH sides or be unitless.
+                // Multiplication/Division must have one unitless side.
+                if (typeof v === 'number') {
+                    return (op === '+' || op === '-') ? `${v}px` : v.toString();
+                }
+                return v;
+            }).join(` ${op} `);
+            return `(${joined})`;
+        }
+
+        return evaluated.reduce((acc, val, i) => {
+            const nAcc = Number(acc) || 0;
+            const nVal = Number(val) || 0;
+            return i === 0 ? nVal : calcFn(nAcc, nVal);
+        }, identity);
+    };
+
+    // Handle Addition/Subtraction first (lowest precedence)
+    const addParts = splitTopLevel(expression, '+');
+    if (addParts.length > 1) return processOp(addParts, '+', 0, (a, b) => a + b);
+
+    const subParts = splitTopLevel(expression, '-');
+    if (subParts.length > 1) return processOp(subParts, '-', 0, (a, b) => a - b);
+
+    // Handle Multiplication/Division (higher precedence)
+    const mulParts = splitTopLevel(expression, '*');
+    if (mulParts.length > 1) return processOp(mulParts, '*', 1, (a, b) => a * b);
+
+    const divParts = splitTopLevel(expression, '/');
+    if (divParts.length > 1) return processOp(divParts, '/', 0, (a, b) => b === 0 ? 0 : a / b);
+
+    return expression;
+};
+
+/**
+ * Helper: Find last dot, ignoring parens
+ */
+const findLastTopLevelDot = (str: string): number => {
+    let inQuote = false;
+    let parenDepth = 0;
+    let lastDot = -1;
+    for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        if (char === '"') inQuote = !inQuote;
+        else if (!inQuote) {
+            if (char === '(') parenDepth++;
+            else if (char === ')') parenDepth--;
+            else if (char === '.' && parenDepth === 0) lastDot = i;
+        }
+    }
+    return lastDot;
 };
 
 

@@ -1,11 +1,20 @@
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #1f1f1f;
+  color-scheme: dark;
+  --bg-primary: #0f1115;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --border-color: #30363d;
+  --text-primary: #f0f6fc;
+  --text-secondary: #8b949e;
+  --accent-color: #58a6ff;
+  --accent-hover: #79c0ff;
+
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -19,6 +28,7 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  background-color: var(--bg-primary);
 }
 
 #root {
@@ -26,67 +36,112 @@ body {
   height: 100vh;
 }
 
-/* Three-Pane Layout Styles */
 .app-container {
   display: grid;
-  grid-template-columns: 350px 1fr 350px;
   height: 100vh;
   width: 100%;
   overflow: hidden;
-  background-color: #252525;
+  background-color: var(--bg-primary);
+  position: relative;
 }
 
 .pane {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #333;
-  background-color: #1a1a1a;
-  color: #e0e0e0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  color: var(--text-primary);
   min-height: 0;
   min-width: 0;
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .pane-right {
   border-right: none;
-  border-left: 1px solid #333;
+  border-left: 1px solid var(--border-color);
 }
 
 .pane-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid #333;
-  background-color: #222;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  font-size: 14px;
 }
 
 .pane-content {
   flex: 1;
   padding: 16px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
 }
 
 .center-pane {
-  background-color: #2d2d2d;
+  background: #0d1117;
+  /* Darker canvas background */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   position: relative;
   overflow: auto;
-  min-height: 0;
-  min-width: 0;
+  padding: 64px 24px 24px 24px;
+  /* Top padding for header */
 }
 
 .canvas-container {
   background-color: white;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px #30363d, 0 20px 40px rgba(0, 0, 0, 0.4);
   position: relative;
   overflow: hidden;
+  border-radius: 4px;
 }
 
-/* Fluent UI Customizations */
-.fui-FluentProvider {
-  height: 100%;
+/* Modern/Enterprise Utilities */
+.modern-button {
+  border-radius: 4px !important;
+  font-weight: 500 !important;
+}
+
+.modern-input {
+  background: var(--bg-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 4px !important;
+  color: var(--text-primary) !important;
+}
+
+.modern-input:focus-within {
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2) !important;
+}
+
+.workspace-app-card {
+  background: var(--bg-tertiary) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 4px !important;
+}
+
+.workspace-app-card.active {
+  background: rgba(88, 166, 255, 0.1) !important;
+  border-color: var(--accent-color) !important;
+}
+
+.workspace-screen-item {
+  border-radius: 4px !important;
+  border: 1px solid transparent !important;
+}
+
+.workspace-screen-item:hover {
+  background: var(--bg-primary) !important;
+}
+
+.workspace-screen-item.active {
+  background: rgba(88, 166, 255, 0.15) !important;
+  color: var(--accent-color) !important;
 }
