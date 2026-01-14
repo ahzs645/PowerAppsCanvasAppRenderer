@@ -168,12 +168,32 @@ const findLastTopLevelDot = (str: string): number => {
  * Processes formula values.
  * Handles `Parent.Height`, `Self.Height`, recursive references, and generating CSS `calc()`.
  */
-const processValue = (value: any, context: any = {}): any => {
+const processValue = (value: any, context: any = {}, key?: string): any => {
     if (typeof value !== 'string') return value;
 
     let cleanValue = value.trim();
     if (cleanValue.startsWith('=')) {
         cleanValue = cleanValue.substring(1).trim();
+    }
+
+    // SKIP for Action properties (OnSelect, OnVisible, OnChange, etc.)
+    // We want the runtime interpreter to handle these, not the build-time parser.
+    if (key && (key.startsWith('On') || key === 'Visible')) { // Visible is also dynamic usually, but currently handled via logic? 
+        // Actually Visible might be "=true" or "=varBool". 
+        // If we skip processing, we return string "varBool". 
+        // ControlMapper then calls evaluateExpression("varBool").
+        // But if processValue evaluates it now, it tries to look it up in context?
+        // normalizeControlSource context is just the properties of the control itself + sibling props maybe?
+        // It does NOT have the runtime global variables.
+        // So for ANY property that depends on runtime variables (which we don't know at parse time), 
+        // we should probably return it as a raw string or formula.
+
+        // HOWEVER, parser.ts attempts to resolve layout formulas like Parent.Width.
+        // We shouldn't break that. 
+        // But OnVisible/OnSelect definitely shouldn't be touched by the simplistic evaluatePowerFx.
+        if (key.startsWith('On')) {
+            return value; // Return original with '=' for interpreter
+        }
     }
 
     // 1. Handle Simple Strings (Quotes)
@@ -216,7 +236,9 @@ const processValue = (value: any, context: any = {}): any => {
     }
 
     // 5. PowerFx Data/String Formulas (User, Split, First, &)
-    if (cleanValue.includes('User(') || cleanValue.includes('First(') || cleanValue.includes('Split(') || cleanValue.includes('&')) {
+    // Avoid evaluating if it looks like logic (&&, ||) which evaluatePowerFx messes up
+    const hasLogic = cleanValue.includes('&&') || cleanValue.includes('||');
+    if (!hasLogic && (cleanValue.includes('User(') || cleanValue.includes('First(') || cleanValue.includes('Split(') || cleanValue.includes('&'))) {
         return evaluatePowerFx(cleanValue);
     }
 
@@ -389,7 +411,8 @@ const normalizeControlSource = (node: any, name: string): any => {
     // Process Properties values
     Object.keys(result).forEach(key => {
         // Pass the current result object as context so Self references can be resolved against other properties
-        result[key] = processValue(result[key], result);
+        // Pass key to avoid evaluating event handlers
+        result[key] = processValue(result[key], result, key);
         // Simple color conversion if needed, though usually handled in renderer
     });
 
@@ -405,6 +428,10 @@ const normalizeControlSource = (node: any, name: string): any => {
     }
 
     // Handle AutoLayout Logic
+    // DISABLED: We want to handle this at runtime via CSS Flexbox in the renderer (ControlMapper/BasicRenderers).
+    // The parser should NOT overwrite Width/Height/X/Y with static calculations because it prevents
+    // dynamic updates (e.g. if Height triggers a variable change, the static calc() won't update).
+    /*
     if (result.Variant === 'AutoLayout' && result._Children && result._Children.length > 0) {
         const count = result._Children.length;
         const gap = typeof result.LayoutGap === 'number' ? result.LayoutGap : 0;
@@ -473,6 +500,7 @@ const normalizeControlSource = (node: any, name: string): any => {
             });
         }
     }
+    */
 
     return result;
 };

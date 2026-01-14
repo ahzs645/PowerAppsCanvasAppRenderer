@@ -9,8 +9,7 @@ import {
     CheckmarkRegular,
     ArrowDownloadRegular,
     EditRegular,
-    StarRegular,
-    ChevronDownRegular
+    StarRegular
 } from '@fluentui/react-icons';
 
 export const DropdownRenderer: React.FC<{ props: any }> = ({ props }) => (
@@ -92,7 +91,10 @@ export const LabelRenderer: React.FC<{ props: any }> = ({ props }) => (
             overflow: props.Wrap ? 'visible' : 'hidden', // Assuming if wrapped we show it, else crop
             textOverflow: props.Wrap ? 'clip' : 'ellipsis'
         }}
-        onClick={props.OnSelect ? () => console.log('Label OnSelect triggered') : undefined}
+        onClick={props.OnSelect ? () => {
+            console.log('Label OnSelect triggered');
+            if (props._onAction) props._onAction(props.OnSelect);
+        } : undefined}
         aria-live={props.Live} // Handle Live property
     >
         {props.Text || ''}
@@ -127,6 +129,11 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
             onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
             onMouseDown={() => setIsPressed(true)}
             onMouseUp={() => setIsPressed(false)}
+            onClick={() => {
+                if (props.OnSelect && props._onAction) {
+                    props._onAction(props.OnSelect);
+                }
+            }}
             style={{
                 width: '100%',
                 height: '100%',
@@ -196,56 +203,69 @@ export const TextInputRenderer: React.FC<{ props: any }> = ({ props }) => {
 };
 
 export const RectangleRenderer: React.FC<{ props: any }> = ({ props }) => (
-    <div style={{
-        width: '100%',
-        height: '100%',
-        backgroundColor: props.Fill || 'transparent',
-        border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : 'none',
-        borderRadius: props.RadiusTopLeft ? `${props.RadiusTopLeft}px` : undefined,
-        boxShadow: props.DropShadow
-    }} />
+    <div
+        onClick={() => {
+            if (props.OnSelect && props._onAction) {
+                props._onAction(props.OnSelect);
+            }
+        }}
+        style={{
+            width: '100%',
+            height: '100%',
+            backgroundColor: props.Fill || 'transparent',
+            border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : 'none',
+            borderRadius: props.RadiusTopLeft ? `${props.RadiusTopLeft}px` : undefined,
+            boxShadow: props.DropShadow,
+            cursor: props.OnSelect ? 'pointer' : 'default'
+        }} />
 );
 
-export const GroupContainerRenderer: React.FC<{ props: any }> = ({ props }) => (
-    <div style={{
-        width: '100%',
-        height: '100%',
-        backgroundColor: props.Fill || 'transparent',
-        // Support border properties
-        border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : 'none',
+export const GroupContainerRenderer: React.FC<{ props: any; children?: React.ReactNode }> = ({ props, children }) => {
+    // Debug logging
+    if (props.Variant === 'AutoLayout') {
+        console.log('GroupContainer AutoLayout:', props.ControlName, props.Variant);
+    }
+    return (
+        <div style={{
+            width: '100%',
+            height: '100%',
+            backgroundColor: props.Fill || 'transparent',
+            // Support border properties
+            border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : 'none',
 
-        // Support Radius (Assuming uniform or leveraging individual if needed, mimicking Rectangle)
-        borderTopLeftRadius: props.RadiusTopLeft ? `${props.RadiusTopLeft}px` : undefined,
-        borderTopRightRadius: props.RadiusTopRight ? `${props.RadiusTopRight}px` : undefined,
-        borderBottomLeftRadius: props.RadiusBottomLeft ? `${props.RadiusBottomLeft}px` : undefined,
-        borderBottomRightRadius: props.RadiusBottomRight ? `${props.RadiusBottomRight}px` : undefined,
+            // Support Radius (Assuming uniform or leveraging individual if needed, mimicking Rectangle)
+            borderTopLeftRadius: props.RadiusTopLeft ? `${props.RadiusTopLeft}px` : undefined,
+            borderTopRightRadius: props.RadiusTopRight ? `${props.RadiusTopRight}px` : undefined,
+            borderBottomLeftRadius: props.RadiusBottomLeft ? `${props.RadiusBottomLeft}px` : undefined,
+            borderBottomRightRadius: props.RadiusBottomRight ? `${props.RadiusBottomRight}px` : undefined,
 
-        // Layout properties
-        boxShadow: props.DropShadow,
-        overflowY: props.LayoutOverflowY === 'Scroll' ? 'auto' : (props.LayoutOverflowY === 'Hidden' ? 'hidden' : 'visible'),
+            // Layout properties
+            boxShadow: props.DropShadow,
+            overflowY: props.LayoutOverflowY === 'Scroll' ? 'auto' : (props.LayoutOverflowY === 'Hidden' ? 'hidden' : 'visible'),
 
-        // Flex properties for children? 
-        // Note: Children are rendered by ControlMapper. 
-        // If this is an AutoLayout container, ControlMapper might need to adjust, 
-        // but often the renderer just provides the box. 
-        // The validator mentioned FillPortions, which is a property on Children usually (flex-grow).
-        // If this container is a Flex container, we might want to set display flex.
-        display: props.Variant === 'AutoLayout' ? 'flex' : 'block',
-        flexDirection: props.LayoutDirection === 'Vertical' ? 'column' : 'row',
-        alignItems: props.LayoutAlignItems, // Map 'Stretch', 'Center', etc. if needed
-        justifyContent: props.LayoutJustifyContent,
-        gap: props.LayoutGap ? `${props.LayoutGap}px` : undefined,
+            // Flex properties for children? 
+            // Note: Children are rendered by ControlMapper. 
+            // If this is an AutoLayout container, ControlMapper might need to adjust, 
+            // but often the renderer just provides the box. 
+            // The validator mentioned FillPortions, which is a property on Children usually (flex-grow).
+            // If this container is a Flex container, we might want to set display flex.
+            display: props.Variant === 'AutoLayout' ? 'flex' : 'block',
+            flexDirection: props.LayoutDirection === 'Vertical' ? 'column' : 'row',
+            alignItems: props.LayoutAlignItems, // Map 'Stretch', 'Center', etc. if needed
+            justifyContent: props.LayoutJustifyContent,
+            gap: props.LayoutGap ? `${props.LayoutGap}px` : undefined,
 
-        paddingTop: props.PaddingTop ? `${props.PaddingTop}px` : undefined,
-        paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
-        paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
-        paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
-    }}>
-        {/* Children will be rendered inside here by ControlMapper */}
-    </div>
-);
+            paddingTop: props.PaddingTop ? `${props.PaddingTop}px` : undefined,
+            paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
+            paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
+            paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
+        }}>
+            {children}
+        </div>
+    );
+};
 
-export const ScreenRenderer: React.FC<{ props: any }> = ({ props }) => (
+export const ScreenRenderer: React.FC<{ props: any; children?: React.ReactNode }> = ({ props, children }) => (
     <div style={{
         width: '100%',
         height: '100%',
@@ -254,7 +274,15 @@ export const ScreenRenderer: React.FC<{ props: any }> = ({ props }) => (
         backgroundSize: props.ImagePosition === 'Fill' ? 'cover' : (props.ImagePosition === 'Fit' ? 'contain' : 'auto'),
         backgroundRepeat: 'no-repeat',
         backgroundPosition: 'center',
-    }} />
+    }}
+        onClick={() => {
+            if (props.OnSelect && props._onAction) {
+                props._onAction(props.OnSelect);
+            }
+        }}
+    >
+        {children}
+    </div>
 );
 
 export const CircleRenderer: React.FC<{ props: any }> = ({ props }) => (
@@ -309,15 +337,21 @@ export const IconRenderer: React.FC<{ props: any }> = ({ props }) => {
     const IconComponent = ICON_MAP[iconName] || StarRegular; // Default to star if unknown
 
     return (
-        <div style={{
-            color: props.Color || 'inherit',
-            width: '100%',
-            height: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            transform: props.Rotation ? `rotate(${props.Rotation}deg)` : undefined
-        }}>
+
+        <div
+            onClick={() => {
+                if (props.OnSelect && props._onAction) props._onAction(props.OnSelect);
+            }}
+            style={{
+                color: props.Color || 'inherit',
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transform: props.Rotation ? `rotate(${props.Rotation}deg)` : undefined,
+                cursor: props.OnSelect ? 'pointer' : 'default'
+            }}>
             <IconComponent style={{ fontSize: props.Height || 20, width: '100%', height: '100%' }} />
         </div>
     );
@@ -357,6 +391,9 @@ export const ImageRenderer: React.FC<{ props: any }> = ({ props }) => {
         <img
             src={src}
             alt="Control"
+            onClick={() => {
+                if (props.OnSelect && props._onAction) props._onAction(props.OnSelect);
+            }}
             style={{
                 width: '100%',
                 height: '100%',
@@ -370,7 +407,8 @@ export const ImageRenderer: React.FC<{ props: any }> = ({ props }) => {
                 borderTopRightRadius: props.RadiusTopRight ? `${props.RadiusTopRight}px` : undefined,
                 borderBottomLeftRadius: props.RadiusBottomLeft ? `${props.RadiusBottomLeft}px` : undefined,
                 borderBottomRightRadius: props.RadiusBottomRight ? `${props.RadiusBottomRight}px` : undefined,
-                border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined
+                border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
+                cursor: props.OnSelect ? 'pointer' : 'default'
             }}
             onError={(e) => {
                 (e.target as HTMLImageElement).style.display = 'none';
@@ -383,7 +421,7 @@ export const ImageRenderer: React.FC<{ props: any }> = ({ props }) => {
 
 
 // Basic Container logic for Forms and Cards
-export const FormRenderer: React.FC<{ props: any }> = ({ props }) => (
+export const FormRenderer: React.FC<{ props: any; children?: React.ReactNode }> = ({ props, children }) => (
     <div style={{
         width: '100%',
         height: '100%',
@@ -393,11 +431,11 @@ export const FormRenderer: React.FC<{ props: any }> = ({ props }) => (
         boxSizing: 'border-box',
         overflow: 'auto'
     }}>
-        {/* Children rendered by parent */}
+        {children}
     </div>
 );
 
-export const TypedDataCardRenderer: React.FC<{ props: any }> = ({ props }) => (
+export const TypedDataCardRenderer: React.FC<{ props: any; children?: React.ReactNode }> = ({ props, children }) => (
     <div style={{
         width: '100%',
         height: '100%',
@@ -408,7 +446,7 @@ export const TypedDataCardRenderer: React.FC<{ props: any }> = ({ props }) => (
         marginBottom: 5
     }}>
         <strong style={{ fontSize: 10, color: '#666' }}>{props.DisplayName || props.DataField}</strong>
-        {/* Children rendered by parent */}
+        {children}
     </div>
 );
 
