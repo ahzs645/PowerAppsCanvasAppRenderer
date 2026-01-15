@@ -11,110 +11,108 @@ const LoginPage: React.FC<LoginPageProps> = ({ onGuestMode }) => {
   return (
     <FluentProvider theme={webDarkTheme}>
       <div className="landing-page">
-        <div className="glass-card" style={{ minWidth: '900px', maxWidth: '1000px', width: '90%' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', marginBottom: '32px' }}>
+        <div className="glass-card" style={{ maxWidth: '1000px', width: '95%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '16px' }}>
             <Text className="landing-title">Canvas App Renderer</Text>
             <Text className="landing-subtitle">Experience PowerApps YAML like never before. High-fidelity rendering with ultimate control.</Text>
           </div>
 
           <div style={{ 
-            display: 'flex', 
-            gap: '20px', 
-            justifyContent: 'center', 
-            alignItems: 'stretch', 
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gap: '24px', 
             width: '100%',
-            maxWidth: '800px', 
-            margin: '0 auto',
-            padding: '0 20px',
-            boxSizing: 'border-box'
+            maxWidth: '900px'
           }}>
             {/* Free Tier Sign In Card */}
-            <Card
-              style={{
-                flex: '1',
-                minWidth: '300px',
-                background: 'linear-gradient(135deg, rgba(0, 120, 212, 0.1) 0%, rgba(0, 120, 212, 0.05) 100%)',
-                border: '1px solid rgba(0, 120, 212, 0.3)',
-                borderRadius: '12px',
-                padding: '24px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-            >
-              <CardHeader
-                header={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                    <Shield size={24} color="#0078d4" />
-                    <Text weight="semibold" size={500}>Free Tier with Account</Text>
-                  </div>
-                }
-              />
+            <div className="premium-card active">
+              <div className="icon-wrapper blue">
+                <Shield size={28} />
+              </div>
               
-              <div style={{ marginBottom: '20px', flex: '1' }}>
-                <Text size={300} style={{ color: '#e1e1e1', marginBottom: '12px', display: 'block' }}>
-                  Full-featured development environment
-                </Text>
-                <ul style={{ margin: 0, paddingLeft: '16px', color: '#94a3b8', fontSize: '14px' }}>
-                  <li>Multi-App support (up to 3 apps)</li>
-                  <li>Multi-Screen support (4 per app)</li>
-                  <li>Cloud sync & persistence</li>
-                  <li>Advanced debugging tools</li>
-                </ul>
+              <Text weight="semibold" size={600} style={{ display: 'block', marginBottom: '8px', color: '#fff' }}>
+                Free Tier
+              </Text>
+              
+              <Text size={300} style={{ color: '#94a3b8', marginBottom: '24px', display: 'block' }}>
+                Full-featured development environment with account synchronization.
+              </Text>
+
+              <div style={{ marginBottom: '32px' }}>
+                {[
+                  'Multi-App support (up to 3 apps)',
+                  'Multi-Screen support (4 per app)',
+                  'Cloud sync & persistence',
+                  'Advanced debugging tools'
+                ].map((text, i) => (
+                  <div key={i} className="list-item">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    <span>{text}</span>
+                  </div>
+                ))}
               </div>
 
               <SignInButton mode="modal">
-                <Button appearance="primary" style={{ width: '100%', height: '40px' }}>
+                <Button 
+                  appearance="primary" 
+                  size="large"
+                  style={{ 
+                    width: '100%', 
+                    height: '48px', 
+                    fontSize: '16px', 
+                    boxShadow: '0 10px 15px -3px rgba(0, 120, 212, 0.3)' 
+                  }}
+                >
                   Sign In (Free)
                 </Button>
               </SignInButton>
-            </Card>
+            </div>
 
             {/* Guest Mode Card */}
-            <Card
-              style={{
-                flex: '1',
-                minWidth: '300px',
-                background: 'linear-gradient(135deg, rgba(100, 116, 139, 0.1) 0%, rgba(100, 116, 139, 0.05) 100%)',
-                border: '1px solid rgba(100, 116, 139, 0.3)',
-                borderRadius: '12px',
-                padding: '24px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-              onClick={onGuestMode}
-            >
-              <CardHeader
-                header={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                    <Users size={24} color="#64748b" />
-                    <Text weight="semibold" size={500}>Guest Mode</Text>
-                  </div>
-                }
-              />
+            <div className="premium-card" onClick={onGuestMode} style={{ cursor: 'pointer' }}>
+              <div className="icon-wrapper slate">
+                <Users size={28} />
+              </div>
               
-              <div style={{ marginBottom: '20px', flex: '1' }}>
-                <Text size={300} style={{ color: '#e1e1e1', marginBottom: '12px', display: 'block' }}>
-                  Try the editor with basic features
-                </Text>
-                <ul style={{ margin: 0, paddingLeft: '16px', color: '#94a3b8', fontSize: '14px' }}>
-                  <li>Single YAML editor</li>
-                  <li>Local browser storage</li>
-                  <li>Basic rendering & validation</li>
-                  <li>No account required</li>
-                </ul>
+              <Text weight="semibold" size={600} style={{ display: 'block', marginBottom: '8px', color: '#fff' }}>
+                Guest Mode
+              </Text>
+              
+              <Text size={300} style={{ color: '#94a3b8', marginBottom: '24px', display: 'block' }}>
+                Explore the renderer features instantly without an account.
+              </Text>
+
+              <div style={{ marginBottom: '32px' }}>
+                {[
+                  'Single YAML editor',
+                  'Local browser storage',
+                  'Basic rendering & validation',
+                  'No account required'
+                ].map((text, i) => (
+                  <div key={i} className="list-item">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    <span>{text}</span>
+                  </div>
+                ))}
               </div>
 
-              <Button appearance="subtle" style={{ width: '100%', height: '40px', border: '1px solid rgba(100, 116, 139, 0.4)' }}>
+              <Button 
+                appearance="subtle" 
+                size="large"
+                style={{ 
+                  width: '100%', 
+                  height: '48px', 
+                  fontSize: '16px',
+                  background: 'rgba(148, 163, 184, 0.1)',
+                  border: '1px solid rgba(148, 163, 184, 0.2)'
+                }}
+              >
                 Continue as Guest
               </Button>
-            </Card>
+            </div>
           </div>
 
-          <Text size={100} style={{ color: '#475569', marginTop: '32px', textAlign: 'center' }}>v1.0.0 • Secured by Clerk</Text>
+          <Text size={100} style={{ color: '#475569', marginTop: '48px' }}>v1.0.0 • Secured by Clerk</Text>
         </div>
       </div>
     </FluentProvider>

@@ -113,6 +113,7 @@ export const LabelRenderer: React.FC<{ props: any }> = ({ props }) => {
                 paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
                 paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
                 border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
+                borderRadius: props.BorderRadius ? `${props.BorderRadius}px` : undefined,
                 cursor: props.OnSelect ? 'pointer' : 'default',
             }}
             onClick={props.OnSelect ? () => {
@@ -122,9 +123,9 @@ export const LabelRenderer: React.FC<{ props: any }> = ({ props }) => {
             <Text
                 size={(props.Size ? props.Size * 20 : 400) as any}
                 style={{
-                    color: props.Color || 'black',
+                    color: props.FontColor || props.Color || 'black',
                     textAlign: textAlign as any,
-                    fontWeight: props.FontWeight?.includes('Bold') ? 'bold' : 'normal',
+                    fontWeight: (props.Weight || props.FontWeight)?.includes('Bold') ? 'bold' : 'normal',
                     whiteSpace: props.Wrap ? 'normal' : 'nowrap',
                     textOverflow: props.Wrap ? 'clip' : 'ellipsis',
                     width: textAlign === 'left' ? 'auto' : '100%',
@@ -162,11 +163,18 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
     const IconComponent = iconName ? (ICON_MAP[iconName] || ICON_MAP[iconName.replace('icon.', '')] || StarRegular) : null;
 
     const fontSize = props.FontSize || (props.Size ? props.Size * 2 : 14);
-    const fontWeight = props.FontWeight?.toLowerCase().includes('bold') ? 'bold' : (props.FontWeight?.toLowerCase().includes('semibold') ? '600' : 'normal');
+    const fontWeight = (props.Weight || props.FontWeight)?.toLowerCase().includes('bold') ? 'bold' : ((props.Weight || props.FontWeight)?.toLowerCase().includes('semibold') ? '600' : 'normal');
+
+    // Appearance mapping
+    const appearance = props.Appearance?.toLowerCase().includes('subtle') ? 'subtle' :
+        (props.Appearance?.toLowerCase().includes('outline') ? 'outline' :
+            (props.Appearance?.toLowerCase().includes('transparent') ? 'transparent' :
+                (props.Appearance?.toLowerCase().includes('primary') ? 'primary' :
+                    (effectiveFill === 'transparent' ? 'transparent' : 'primary'))));
 
     return (
         <FluentButton
-            appearance={effectiveFill === 'transparent' ? 'transparent' : 'primary'}
+            appearance={appearance as any}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
             onMouseDown={() => setIsPressed(true)}
@@ -185,6 +193,7 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
                 border: (props.BorderThickness > 0 && effectiveBorderColor) ? `${props.BorderThickness}px solid ${effectiveBorderColor}` : 'none',
                 fontSize: typeof fontSize === 'number' ? `${fontSize}px` : fontSize,
                 fontWeight: fontWeight as any,
+                borderRadius: props.BorderRadius ? `${props.BorderRadius}px` : undefined,
                 display: 'flex',
                 alignItems: props.VerticalAlign?.toLowerCase().includes('bottom') ? 'flex-end' : (props.VerticalAlign?.toLowerCase().includes('top') ? 'flex-start' : 'center'),
                 justifyContent: props.Align?.toLowerCase().includes('right') ? 'flex-end' : (props.Align?.toLowerCase().includes('left') ? 'flex-start' : 'center'),
