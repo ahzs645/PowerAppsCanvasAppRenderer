@@ -10,6 +10,7 @@ export interface AppWithScreens {
   start_screen_id: string | null
   created_at: string
   updated_at: string
+  mock_data: string | null
   screens: DatabaseScreen[]
 }
 
@@ -83,8 +84,9 @@ export async function getUserWorkspace(userId: string): Promise<WorkspaceData> {
       user_id: app.user_id,
       created_at: app.created_at,
       updated_at: app.updated_at,
+      mock_data: app.mock_data,
       screens: allScreens.filter(s => s.app_id === app.id),
-      startScreenId: app.start_screen_id
+      start_screen_id: app.start_screen_id
     }));
 
     return {
@@ -139,7 +141,8 @@ export async function createApp(userId: string, name: string, defaultYaml: strin
     return {
       ...app,
       start_screen_id: screen.id,
-      screens: [screen]
+      screens: [screen],
+      mock_data: app.mock_data
     }
   } catch (error) {
     console.error('Error creating app:', error)
@@ -394,5 +397,21 @@ export async function deleteAppImage(imageId: string): Promise<boolean> {
   } catch (error) {
     console.error('Error deleting app image:', error);
     return false;
+  }
+}
+
+// Update app mock data
+export async function updateAppMockData(appId: string, mockData: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('apps')
+      .update({ mock_data: mockData })
+      .eq('id', appId)
+
+    if (error) throw error
+    return true
+  } catch (error) {
+    console.error('Error updating app mock data:', error)
+    return false
   }
 }

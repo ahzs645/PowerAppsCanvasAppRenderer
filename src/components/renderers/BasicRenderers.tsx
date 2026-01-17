@@ -172,31 +172,39 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
                 (props.Appearance?.toLowerCase().includes('primary') ? 'primary' :
                     (effectiveFill === 'transparent' ? 'transparent' : 'primary'))));
 
+    const isDisabled = props.DisplayMode === 'Disabled' || props.DisplayMode === 'View';
+
     return (
         <FluentButton
             appearance={appearance as any}
-            onMouseEnter={() => setIsHovered(true)}
+            disabled={isDisabled}
+            onMouseEnter={() => !isDisabled && setIsHovered(true)}
             onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
-            onMouseDown={() => setIsPressed(true)}
+            onMouseDown={() => !isDisabled && setIsPressed(true)}
             onMouseUp={() => setIsPressed(false)}
             icon={IconComponent ? <IconComponent /> : undefined}
             onClick={() => {
-                if (props.OnSelect && props._onAction) {
+                if (props.OnSelect && props._onAction && !isDisabled) {
                     props._onAction(props.OnSelect);
                 }
             }}
             style={{
                 width: '100%',
                 height: '100%',
-                backgroundColor: effectiveFill !== 'transparent' ? effectiveFill : undefined,
-                color: effectiveColor || undefined,
-                border: (props.BorderThickness > 0 && effectiveBorderColor) ? `${props.BorderThickness}px solid ${effectiveBorderColor}` : 'none',
+                backgroundColor: !isDisabled ? (effectiveFill !== 'transparent' ? effectiveFill : undefined) : props.DisabledFill,
+                color: !isDisabled ? (effectiveColor || undefined) : props.DisabledColor,
+                border: (props.BorderThickness > 0 && effectiveBorderColor) ? `${props.BorderThickness}px solid ${isDisabled ? props.DisabledBorderColor || effectiveBorderColor : effectiveBorderColor}` : 'none',
                 fontSize: typeof fontSize === 'number' ? `${fontSize}px` : fontSize,
                 fontWeight: fontWeight as any,
-                borderRadius: props.BorderRadius ? `${props.BorderRadius}px` : undefined,
+                fontFamily: props.Font,
+                borderTopLeftRadius: props.RadiusTopLeft ? `${props.RadiusTopLeft}px` : (props.BorderRadius ? `${props.BorderRadius}px` : undefined),
+                borderTopRightRadius: props.RadiusTopRight ? `${props.RadiusTopRight}px` : (props.BorderRadius ? `${props.BorderRadius}px` : undefined),
+                borderBottomLeftRadius: props.RadiusBottomLeft ? `${props.RadiusBottomLeft}px` : (props.BorderRadius ? `${props.BorderRadius}px` : undefined),
+                borderBottomRightRadius: props.RadiusBottomRight ? `${props.RadiusBottomRight}px` : (props.BorderRadius ? `${props.BorderRadius}px` : undefined),
                 display: 'flex',
                 alignItems: props.VerticalAlign?.toLowerCase().includes('bottom') ? 'flex-end' : (props.VerticalAlign?.toLowerCase().includes('top') ? 'flex-start' : 'center'),
                 justifyContent: props.Align?.toLowerCase().includes('right') ? 'flex-end' : (props.Align?.toLowerCase().includes('left') ? 'flex-start' : 'center'),
+                paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
             }}
         >
             {props.Text ?? 'Button'}
@@ -280,7 +288,7 @@ export const RectangleRenderer: React.FC<{ props: any }> = ({ props }) => (
 export const GroupContainerRenderer: React.FC<{ props: any; children?: React.ReactNode }> = ({ props, children }) => {
     // Debug logging
     if (props.Variant === 'AutoLayout') {
-        console.log('GroupContainer AutoLayout:', props.ControlName, props.Variant);
+        // console.log('GroupContainer AutoLayout:', props.ControlName, props.Variant);
     }
     return (
         <div style={{
@@ -362,20 +370,29 @@ export const DatePickerRenderer: React.FC<{ props: any }> = ({ props }) => {
     // Handle focus state in real app, here we verify the property is allowed
     // We can use FocusedBorderThickness if we want to simulate it, but static renderer is harder for interaction states without state.
     // We'll just use BorderThickness as default.
+    const isDisabled = props.DisplayMode === 'Disabled' || props.DisplayMode === 'View';
+
     return (
-        <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            backgroundColor: props.Fill || '#fff',
-            border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : 'none',
-            color: props.Color || '#000',
-            padding: '0 8px',
-            height: '100%',
-            boxSizing: 'border-box',
-            fontFamily: props.Font,
-            fontWeight: props.FontWeight
-        }}>
-            <Text>{props.DefaultDate || 'Select Date'}</Text>
+        <div
+            onClick={() => {
+                if (props.OnChange && props._onAction && !isDisabled) {
+                    props._onAction(props.OnChange);
+                }
+            }}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                backgroundColor: isDisabled ? props.DisabledFill || props.Fill || '#f3f2f1' : props.Fill || '#fff',
+                border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${isDisabled ? props.DisabledBorderColor || props.BorderColor : props.BorderColor}` : 'none',
+                color: isDisabled ? props.DisabledColor || props.Color || '#a19f9d' : props.Color || '#000',
+                padding: '0 8px',
+                height: '100%',
+                boxSizing: 'border-box',
+                fontFamily: props.Font,
+                fontWeight: props.FontWeight,
+                opacity: isDisabled ? 0.8 : 1
+            }}>
+            <Text style={{ color: 'inherit', fontWeight: 'inherit' }}>{props.DefaultDate || 'Select Date'}</Text>
             <CalendarMonthRegular style={{ marginLeft: 'auto', color: props.IconFill, backgroundColor: props.IconBackground }} />
         </div>
     )
@@ -420,6 +437,8 @@ export const ImageRenderer: React.FC<{
     onUploadSuccess?: (img: any) => void
 }> = ({ props, appId, appImages, onUploadSuccess }) => {
     const [hasError, setHasError] = React.useState(false);
+    const [isHovered, setIsHovered] = React.useState(false);
+    const [isPressed, setIsPressed] = React.useState(false);
     let src = props.Image;
     const imageName = typeof src === 'string' ? src : props.ControlName;
 
@@ -519,18 +538,29 @@ export const ImageRenderer: React.FC<{
         );
     }
 
+    const isDisabled = props.DisplayMode === 'Disabled' || props.DisplayMode === 'View';
+
+    let effectiveFill = props.Fill || 'transparent';
+    if (isDisabled) effectiveFill = props.DisabledFill || effectiveFill;
+    else if (isPressed && props.PressedFill) effectiveFill = props.PressedFill;
+    else if (isHovered && props.HoverFill) effectiveFill = props.HoverFill;
+
     return (
         <img
             src={src}
             alt={imageName || "Control"}
+            onMouseEnter={() => !isDisabled && setIsHovered(true)}
+            onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
+            onMouseDown={() => !isDisabled && setIsPressed(true)}
+            onMouseUp={() => setIsPressed(false)}
             onClick={() => {
-                if (props.OnSelect && props._onAction) props._onAction(props.OnSelect);
+                if (props.OnSelect && props._onAction && !isDisabled) props._onAction(props.OnSelect);
             }}
             style={{
                 width: '100%',
                 height: '100%',
                 objectFit: 'contain',
-                backgroundColor: props.Fill || 'transparent',
+                backgroundColor: effectiveFill,
                 paddingTop: props.PaddingTop ? `${props.PaddingTop}px` : undefined,
                 paddingRight: props.PaddingRight ? `${props.PaddingRight}px` : undefined,
                 paddingBottom: props.PaddingBottom ? `${props.PaddingBottom}px` : undefined,
@@ -540,7 +570,8 @@ export const ImageRenderer: React.FC<{
                 borderBottomLeftRadius: props.RadiusBottomLeft ? `${props.RadiusBottomLeft}px` : undefined,
                 borderBottomRightRadius: props.RadiusBottomRight ? `${props.RadiusBottomRight}px` : undefined,
                 border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
-                cursor: props.OnSelect ? 'pointer' : 'default'
+                cursor: props.OnSelect && !isDisabled ? 'pointer' : 'default',
+                opacity: isDisabled ? 0.7 : 1
             }}
             onError={() => {
                 setHasError(true);
@@ -586,7 +617,6 @@ export const GalleryRenderer: React.FC<{ props: any; children?: React.ReactNode 
     // Gallery has _Children which usually represent the template
     // It also has 'TemplateSize' (height of item)
     // We can simulate a few items.
-    const templateHeight = props.TemplateSize || 100;
 
     // We need to render the children for each item. 
     // BUT, ControlMapper is recursive. 
@@ -614,20 +644,12 @@ export const GalleryRenderer: React.FC<{ props: any; children?: React.ReactNode 
             width: '100%',
             height: '100%',
             overflowY: 'auto',
+            backgroundColor: props.Fill || 'transparent',
             border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : 'none'
         }}>
-            {/* We don't render children here, ControlMapper will render them as children of this component 
-               if we render {props.children}. But BasicRenderers are leaf nodes usually. 
-               We need to change how ControlMapper handles it. 
-               Actually ControlMapper renders {Renderer} then {children}.
-               So if we just render a Div, the children (template) will appear inside.
-           */}
-            <div style={{ position: 'relative', height: templateHeight * 1, width: '100%' }}>
-                {/* This is where the children will naturally fall if they are absolute positioned */}
-                {children}
-            </div>
+            {children}
             {/* Visual cue that it is a gallery */}
-            <div style={{ padding: 4, position: 'absolute', right: 0, top: 0, background: 'rgba(0,0,0,0.1)', fontSize: 10 }}>
+            <div style={{ padding: 4, position: 'absolute', right: 0, top: 0, background: 'rgba(0,0,0,0.1)', fontSize: 10, pointerEvents: 'none' }}>
                 Gallery
             </div>
         </div>

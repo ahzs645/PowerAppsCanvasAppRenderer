@@ -31,6 +31,8 @@ import { WorkspaceNavigator } from './components/workspace/WorkspaceNavigator';
 import { AppHeader } from './components/layout/AppHeader';
 import { PropertiesPanel } from './components/inspector/PropertiesPanel';
 import { YamlEditor } from './components/editor/YamlEditor'; // Ensure this matches file path
+import { ControlContextMenu } from './components/layout/ControlContextMenu';
+import yaml from 'js-yaml';
 import type { UserWorkspace, AppInstance, Screen } from './types';
 import defaultYaml from './default.yaml?raw';
 
@@ -67,6 +69,18 @@ const App: React.FC = () => {
   // activeTab state moved to PropertiesPanel, effectively (or kept if needed for other logic? It was only for the panel).
   // Actually App.tsx handled activeTab for the right pane. I moved it inside PropertiesPanel. So I can remove it here.
   const [highlightedControls, setHighlightedControls] = useState<Set<string>>(new Set());
+  const [selectedControlName, setSelectedControlName] = useState<string | null>(null);
+
+  // Context Menu State
+  const [contextMenu, setContextMenu] = useState<{
+    open: boolean;
+    position: { x: number; y: number };
+    controlName: string;
+  }>({
+    open: false,
+    position: { x: 0, y: 0 },
+    controlName: ''
+  });
 
   // Layout State
   const [activeSidebarTab, setActiveSidebarTab] = useState<'navigator' | 'editor'>('editor');
@@ -90,7 +104,8 @@ const App: React.FC = () => {
                 name: screen.name,
                 yaml: screen.yaml
               })),
-              startScreenId: app.startScreenId
+              startScreenId: app.start_screen_id,
+              mockData: app.mock_data
             })),
             activeAppId: workspaceData.activeAppId,
             activeScreenId: workspaceData.activeScreenId
@@ -127,6 +142,11 @@ const App: React.FC = () => {
       const activeScreen = activeApp?.screens.find(s => s.id === workspace.activeScreenId);
       if (activeScreen) {
         setYamlContent(activeScreen.yaml);
+      }
+      if (activeApp?.mockData) {
+        setMockData(activeApp.mockData);
+      } else if (activeApp) {
+        setMockData('{\n  "Items": []\n}'); // Default if none
       }
     }
   }, [isSignedIn, workspace.activeAppId, workspace.activeScreenId]);
@@ -171,6 +191,33 @@ const App: React.FC = () => {
     }
   }, [yamlContent, isSignedIn, user?.id, workspace.activeScreenId]);
 
+  // Effect to save mockData back to the workspace and database
+  useEffect(() => {
+    if (isSignedIn && workspace.activeAppId) {
+      setWorkspace(prev => {
+        const newApps = prev.apps.map(app => {
+          if (app.id === prev.activeAppId) {
+            return { ...app, mockData };
+          }
+          return app;
+        });
+        return { ...prev, apps: newApps };
+      });
+
+      const timeoutId = setTimeout(async () => {
+        if (workspace.activeAppId) {
+          try {
+            await db.updateAppMockData(workspace.activeAppId, mockData);
+          } catch (error) {
+            console.error('Auto-save mock data failed:', error);
+          }
+        }
+      }, 2000);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [mockData, isSignedIn, workspace.activeAppId]);
+
   // --- Handlers (Create, Delete, Rename) ---
   // (Keeping these in App.tsx as they manage the global workspace state)
 
@@ -191,7 +238,9 @@ const App: React.FC = () => {
             id: screen.id,
             name: screen.name,
             yaml: screen.yaml
-          }))
+          })),
+          startScreenId: newApp.screens[0].id,
+          mockData: newApp.mock_data
         };
         setWorkspace(prev => ({
           ...prev,
@@ -403,7 +452,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleNavigate = React.useCallback((screenName: string) => {
+  const handleNavigate = React.useCallback((screenName?: string) => {
     if (!isSignedIn) {
       dispatchToast(
         <Toast>
@@ -427,12 +476,268 @@ const App: React.FC = () => {
     }
   }, [isSignedIn, workspace, dispatchToast]);
 
+  const handleContextMenu = (e: React.MouseEvent, controlName: string) => {
+    e.preventDefault();
+    setContextMenu({
+      open: true,
+      position: { x: e.clientX, y: e.clientY },
+      controlName
+    });
+  };
+
+  const handleCopyControl = (controlName: string) => {
+    const findControl = (node: any): any => {
+      if (node.Screens) {
+        for (const screenName of Object.keys(node.Screens)) {
+          if (screenName === controlName) return { [screenName]: node.Screens[screenName] };
+          const found = findInNode(node.Screens[screenName]);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const findInNode = (node: any): any => {
+      if (node.Children) {
+        for (const childObj of node.Children) {
+          const childName = Object.keys(childObj)[0];
+          if (childName === controlName) return childObj;
+          const found = findInNode(childObj[childName]);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    try {
+      const raw = yaml.load(yamlContent) as any;
+      const control = findControl(raw);
+      if (control) {
+        const snippet = yaml.dump(control, { indent: 2, lineWidth: -1 });
+        navigator.clipboard.writeText(snippet);
+        notify('YAML copied to clipboard!');
+      }
+    } catch (e) {
+      console.error('Error copying control:', e);
+    }
+    setContextMenu(prev => ({ ...prev, open: false }));
+  };
+
+  const handleDeleteControl = (controlName: string) => {
+    if (!confirm(`Are you sure you want to remove ${controlName}?`)) return;
+
+    const removeFromNode = (node: any): boolean => {
+      if (node.Screens) {
+        if (node.Screens[controlName]) {
+          delete node.Screens[controlName];
+          return true;
+        }
+        for (const screenName of Object.keys(node.Screens)) {
+          if (removeFromNode(node.Screens[screenName])) return true;
+        }
+      }
+      if (node.Children) {
+        const index = node.Children.findIndex((c: any) => Object.keys(c)[0] === controlName);
+        if (index !== -1) {
+          node.Children.splice(index, 1);
+          return true;
+        }
+        for (const childObj of node.Children) {
+          const childName = Object.keys(childObj)[0];
+          if (removeFromNode(childObj[childName])) return true;
+        }
+      }
+      return false;
+    };
+
+    try {
+      const raw = yaml.load(yamlContent) as any;
+      if (removeFromNode(raw)) {
+        const newYaml = yaml.dump(raw, { indent: 2, lineWidth: -1 });
+        setYamlContent(newYaml);
+        notify('Control removed!');
+        if (selectedControlName === controlName) setSelectedControlName(null);
+      }
+    } catch (e) {
+      console.error('Error deleting control:', e);
+    }
+    setContextMenu(prev => ({ ...prev, open: false }));
+  };
+
+  const handleEditControl = (controlName: string) => {
+    setSelectedControlName(controlName);
+    setRightPanelVisible(true);
+    setContextMenu(prev => ({ ...prev, open: false }));
+  };
+
+  const handleViewControl = (controlName: string) => {
+    // Logic to show YAML snippet in a modal or just switch to JSON tab for now
+    setSelectedControlName(controlName);
+    setRightPanelVisible(true);
+    // Maybe we can also trigger a "view" mode in PropertiesPanel but let's stick to simple edit for now
+    setContextMenu(prev => ({ ...prev, open: false }));
+  };
+
+  const handleRenameControl = (controlName: string) => {
+    const newName = prompt(`Enter new name for ${controlName}:`, controlName);
+    if (!newName || newName === controlName) return;
+
+    // Simple regex check for valid control names (starts with letter, alphanumeric)
+    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(newName)) {
+      alert('Invalid control name. Must start with a letter and contain only alphanumeric characters or underscores.');
+      return;
+    }
+
+    const renameInNode = (node: any): boolean => {
+      if (node.Screens) {
+        if (node.Screens[controlName]) {
+          node.Screens[newName] = node.Screens[controlName];
+          node.Screens[newName].ControlName = newName; // Update internal ControlName if exists
+          delete node.Screens[controlName];
+          return true;
+        }
+        for (const screenName of Object.keys(node.Screens)) {
+          if (renameInNode(node.Screens[screenName])) return true;
+        }
+      }
+      if (node.Children) {
+        for (const childObj of node.Children) {
+          const oldName = Object.keys(childObj)[0];
+          if (oldName === controlName) {
+            childObj[newName] = childObj[oldName];
+            childObj[newName].ControlName = newName;
+            delete childObj[oldName];
+            return true;
+          }
+          if (renameInNode(childObj[oldName])) return true;
+        }
+      }
+      return false;
+    };
+
+    try {
+      const raw = yaml.load(yamlContent) as any;
+      if (renameInNode(raw)) {
+        const newYaml = yaml.dump(raw, { indent: 2, lineWidth: -1 });
+        setYamlContent(newYaml);
+        notify('Control renamed!');
+        if (selectedControlName === controlName) setSelectedControlName(newName);
+      } else {
+        alert('Could not find control to rename.');
+      }
+    } catch (e) {
+      console.error('Error renaming control:', e);
+      alert('Error renaming control. Check console for details.');
+    }
+    setContextMenu(prev => ({ ...prev, open: false }));
+  };
+
+  const handleMoveControl = (sourceName: string, targetName: string, position: 'before' | 'after' | 'inside') => {
+    try {
+      const raw = yaml.load(yamlContent) as any;
+      if (!raw) return;
+
+      let sourceObj: any = null;
+
+      // 1. Find and remove source
+      const findAndRemove = (node: any): boolean => {
+        if (node.Screens) {
+          if (node.Screens[sourceName]) {
+            sourceObj = { [sourceName]: node.Screens[sourceName] };
+            delete node.Screens[sourceName];
+            return true;
+          }
+          for (const screenName of Object.keys(node.Screens)) {
+            if (findAndRemove(node.Screens[screenName])) return true;
+          }
+        }
+        if (node.Children) {
+          const idx = node.Children.findIndex((c: any) => Object.keys(c)[0] === sourceName);
+          if (idx !== -1) {
+            sourceObj = node.Children[idx];
+            node.Children.splice(idx, 1);
+            return true;
+          }
+          for (const childObj of node.Children) {
+            if (findAndRemove(childObj[Object.keys(childObj)[0]])) return true;
+          }
+        }
+        return false;
+      };
+
+      findAndRemove(raw);
+      if (!sourceObj) {
+        console.warn('Could not find source control to move:', sourceName);
+        return;
+      }
+
+      // 2. Find target and insert
+      const findAndInsert = (node: any): boolean => {
+        if (node.Screens) {
+          if (node.Screens[targetName]) {
+            // Screens can only be reordered among screens
+            const screens = Object.keys(raw.Screens);
+            const newScreens: any = {};
+            screens.forEach((name) => {
+              if (position === 'before' && name === targetName) {
+                newScreens[sourceName] = sourceObj[sourceName];
+              }
+              newScreens[name] = raw.Screens[name];
+              if (position === 'after' && name === targetName) {
+                newScreens[sourceName] = sourceObj[sourceName];
+              }
+            });
+            raw.Screens = newScreens;
+            return true;
+          }
+          for (const screenName of Object.keys(node.Screens)) {
+            if (findAndInsert(node.Screens[screenName])) return true;
+          }
+        }
+        if (node.Children) {
+          const idx = node.Children.findIndex((c: any) => Object.keys(c)[0] === targetName);
+          if (idx !== -1) {
+            // Target found in this children list
+            const insertIdx = position === 'before' ? idx : idx + 1;
+            node.Children.splice(insertIdx, 0, sourceObj);
+            return true;
+          }
+          for (const childObj of node.Children) {
+            if (findAndInsert(childObj[Object.keys(childObj)[0]])) return true;
+          }
+        }
+        return false;
+      };
+
+      if (findAndInsert(raw)) {
+        const newYaml = yaml.dump(raw, { indent: 2, lineWidth: -1 });
+        setYamlContent(newYaml);
+        notify('Control moved!');
+      } else {
+        console.warn('Could not find target to insert control:', targetName);
+      }
+
+    } catch (e) {
+      console.error('Error moving control:', e);
+    }
+  };
+
   useEffect(() => {
     processYaml();
   }, [yamlContent]);
 
+
   return (
-    <PowerFxProvider onNavigate={handleNavigate} onNotify={notify}>
+    <PowerFxProvider
+      onNavigate={handleNavigate}
+      onNotify={notify}
+      mockData={mockData}
+      currentUser={user ? {
+        emailAddress: user.primaryEmailAddress?.emailAddress,
+        fullName: user.fullName || undefined,
+        imageUrl: user.imageUrl
+      } : null}
+    >
       <FluentProvider theme={webDarkTheme}>
         <Toaster toasterId={toasterId} />
         {(!isSignedIn && !isGuest) ? (
@@ -547,6 +852,12 @@ const App: React.FC = () => {
                     appId={workspace.activeAppId}
                     appImages={appImages}
                     onImageUploaded={(img) => setAppImages(prev => [...prev.filter(i => i.name !== img.name), img])}
+                    selectedControlName={selectedControlName}
+                    onSelectControl={(name: string) => {
+                      setSelectedControlName(name);
+                      setRightPanelVisible(true);
+                    }}
+                    onContextMenu={handleContextMenu}
                   />
                 ))}
               </div>
@@ -561,8 +872,27 @@ const App: React.FC = () => {
               <PropertiesPanel
                 parsedData={parsedData}
                 validationIssues={validationIssues}
+                selectedControlName={selectedControlName}
+                onSelectControl={setSelectedControlName}
+                onInspectControl={setSelectedControlName}
+                onContextMenu={handleContextMenu}
+                onMoveControl={handleMoveControl}
+                yamlContent={yamlContent}
+                onYamlChange={setYamlContent}
               />
             )}
+
+            <ControlContextMenu
+              open={contextMenu.open}
+              onOpenChange={(open) => setContextMenu(prev => ({ ...prev, open }))}
+              position={contextMenu.position}
+              controlName={contextMenu.controlName}
+              onCopy={handleCopyControl}
+              onEdit={handleEditControl}
+              onView={handleViewControl}
+              onRename={handleRenameControl}
+              onRemove={handleDeleteControl}
+            />
           </div>
         )}
       </FluentProvider>

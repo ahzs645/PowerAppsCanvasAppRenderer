@@ -1,3 +1,4 @@
+import { getControlSchema } from '../models/ControlRegistry';
 
 export interface ValidationError {
     type: 'unknown_control' | 'unknown_property';
@@ -6,29 +7,8 @@ export interface ValidationError {
     severity: 'warning' | 'error';
 }
 
-// Whitelist of supported controls and their known properties
-const KNOWN_CONTROLS: Record<string, string[]> = {
-    'screen': ['Fill', 'ImagePosition', 'BackgroundImage', 'LoadingSpinnerColor', 'OnVisible'],
-    'label': ['Text', 'X', 'Y', 'Width', 'Height', 'Size', 'Color', 'Align', 'Font', 'FontWeight', 'Visible', 'BorderColor', 'BorderThickness', 'Fill', 'OnSelect', 'PaddingLeft', 'PaddingRight', 'PaddingTop', 'PaddingBottom', 'AutoHeight', 'Wrap', 'Live', 'VerticalAlign'],
-    'button': ['Text', 'X', 'Y', 'Width', 'Height', 'Size', 'Color', 'Fill', 'BorderColor', 'Visible', 'OnSelect', 'HoverFill', 'PressedFill', 'DisabledBorderColor', 'DisabledColor', 'DisabledFill', 'FocusedBorderColor', 'HoverBorderColor', 'HoverColor', 'PressedBorderColor', 'PressedColor', 'BorderThickness', 'RadiusBottomLeft', 'RadiusBottomRight', 'RadiusTopLeft', 'RadiusTopRight', 'PaddingRight', 'PaddingLeft', 'PaddingTop', 'PaddingBottom', 'Align', 'Font', 'FontSize', 'Icon', 'Layout', 'VerticalAlign', 'FocusedBorderThickness', 'FontWeight', 'Appearance', 'BorderRadius'],
-    'textinput': ['Default', 'HintText', 'X', 'Y', 'Width', 'Height', 'Size', 'Color', 'Fill', 'BorderColor', 'Visible', 'Mode', 'Format', 'BorderThickness', 'DisabledBorderColor', 'DisabledColor', 'DisabledFill', 'DisplayMode', 'Font', 'HoverBorderColor', 'HoverFill', 'DelayOutput', 'MaxLength', 'PaddingLeft', 'RadiusBottomLeft', 'RadiusBottomRight', 'RadiusTopLeft', 'RadiusTopRight', 'Tooltip'],
-    'rectangle': ['X', 'Y', 'Width', 'Height', 'Fill', 'BorderColor', 'Visible'],
-    'groupcontainer': ['X', 'Y', 'Width', 'Height', 'Visible', 'Fill', 'DropShadow', 'RadiusBottomLeft', 'RadiusBottomRight', 'RadiusTopLeft', 'RadiusTopRight', 'PaddingBottom', 'PaddingLeft', 'PaddingRight', 'PaddingTop', 'Variant', 'LayoutAlignItems', 'LayoutDirection', 'LayoutGap', 'LayoutJustifyContent', 'LayoutMinHeight', 'LayoutMinWidth', 'LayoutMaxHeight', 'LayoutMaxWidth', 'BorderColor', 'BorderThickness', 'LayoutOverflowY', 'FillPortions'],
-    'icon': ['Icon', 'X', 'Y', 'Width', 'Height', 'Color', 'BorderColor', 'Visible', 'OnSelect', 'HoverFill', 'PressedFill', 'DisabledFill', 'Rotation', 'Tooltip'],
-    'image': ['Image', 'X', 'Y', 'Width', 'Height', 'BorderColor', 'Visible', 'OnSelect', 'DisabledFill', 'HoverFill', 'PressedFill', 'DisabledBorderColor', 'Fill', 'PaddingTop', 'PaddingRight', 'PaddingBottom', 'PaddingLeft', 'RadiusTopLeft', 'RadiusTopRight', 'RadiusBottomLeft', 'RadiusBottomRight'],
-    'gallery': ['Items', 'TemplateSize', 'X', 'Y', 'Width', 'Height', 'BorderColor', 'Visible', 'Variant'],
-    'datepicker': ['DefaultDate', 'X', 'Y', 'Width', 'Height', 'BorderColor', 'Color', 'Fill', 'Visible', 'BorderThickness', 'DisabledBorderColor', 'DisabledColor', 'FocusedBorderColor', 'Font', 'FontWeight', 'IconBackground', 'IconFill', 'OnChange', 'FocusedBorderThickness'],
-    'circle': ['Fill', 'BorderColor', 'X', 'Y', 'Width', 'Height', 'Visible'],
-    'dropdown': ['Items', 'X', 'Y', 'Width', 'Height', 'Visible', 'Fill', 'BorderColor', 'BorderThickness', 'Color', 'Default', 'Select', 'OnSelect', 'ChevronBackground', 'ChevronFill', 'ChevronHoverBackground', 'ChevronHoverFill', 'Font', 'HoverFill', 'Items.Value', 'PressedColor', 'PressedFill', 'SelectionColor', 'SelectionFill', 'OnChange'],
-    'combobox': ['Items', 'X', 'Y', 'Width', 'Height', 'Visible', 'Fill', 'BorderColor', 'BorderThickness', 'Color', 'Default', 'Select', 'OnSelect', 'ChevronBackground', 'ChevronFill', 'ChevronHoverBackground', 'ChevronHoverFill', 'Font', 'HoverFill', 'Items.Value', 'PressedColor', 'PressedFill', 'SelectionColor', 'SelectionFill', 'OnChange', 'IsSearchable', 'SelectMultiple', 'DefaultSelectedItems', 'DisplayMode', 'PaddingLeft', 'Tooltip', 'DisplayFields', 'SearchFields'],
-    'form': ['X', 'Y', 'Width', 'Height', 'Visible', 'Fill', 'BorderColor', 'BorderThickness', 'DataSource', 'Item', 'OnSuccess', 'OnFailure', 'OnReset', 'SnapToColumns'],
-    'typeddatacard': ['X', 'Y', 'Width', 'Height', 'Visible', 'Fill', 'BorderColor', 'BorderThickness', 'DataField', 'DisplayName', 'Required', 'Update', 'Default', 'MaxLength'],
-    'text': ['Text', 'X', 'Y', 'Width', 'Height', 'Size', 'Color', 'Align', 'Font', 'FontWeight', 'Visible', 'BorderColor', 'BorderThickness', 'Fill', 'OnSelect', 'PaddingLeft', 'PaddingRight', 'PaddingTop', 'PaddingBottom', 'AutoHeight', 'Wrap', 'Live', 'VerticalAlign', 'BorderRadius', 'FontColor', 'Weight'],
-    'canvascomponent': ['X', 'Y', 'Width', 'Height', 'Visible', 'Fill']
-};
-
-// Common properties applicable to almost all controls
-const COMMON_PROPS = ['X', 'Y', 'Width', 'Height', 'Visible', 'As', 'Control', 'Variant', 'ControlName', 'LayoutMinHeight', 'LayoutMinWidth', 'LayoutFillPortion'];
+// Internal metadata properties to skip during validation
+const INTERNAL_PROPS = ['As', 'Children', '_Children', 'ControlName', 'Control', 'Properties', 'Variant'];
 
 export const validateControl = (control: any, path: string = 'root'): ValidationError[] => {
     let errors: ValidationError[] = [];
@@ -39,12 +19,12 @@ export const validateControl = (control: any, path: string = 'root'): Validation
     const controlType = control.As?.toLowerCase();
 
     if (!controlType) {
-        // If no 'As', it might be the root container object (like a map of screens)
-        // We will just try to recurse on children or keys if it looks like a container
         return errors;
     }
 
-    if (!KNOWN_CONTROLS[controlType]) {
+    const schema = getControlSchema(controlType);
+
+    if (!schema) {
         errors.push({
             type: 'unknown_control',
             message: `Unknown control type: '${control.As}'`,
@@ -53,13 +33,12 @@ export const validateControl = (control: any, path: string = 'root'): Validation
         });
     } else {
         // Validate properties
-        const allowedProps = new Set([...KNOWN_CONTROLS[controlType], ...COMMON_PROPS]);
+        const allowedProps = new Set([...schema.getAllowedProperties(), ...INTERNAL_PROPS]);
 
         Object.keys(control).forEach(prop => {
-            // Skip internal keys or children or metadata
-            if (prop.startsWith('_') || prop === 'As' || prop === 'Children') return;
+            // Skip children
+            if (prop === 'Children') return;
 
-            // Allow strict equality check
             if (!allowedProps.has(prop)) {
                 errors.push({
                     type: 'unknown_property',

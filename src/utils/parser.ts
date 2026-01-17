@@ -60,13 +60,15 @@ const evaluatePowerFx = (expression: string): any => {
 
             // String Literal
             if (expr.startsWith('"') && expr.endsWith('"')) {
-                return expr.substring(1, expr.length - 1);
+                return expr.substring(1, expr.length - 1).replace(/""/g, '"');
+            }
+            if (expr.startsWith("'") && expr.endsWith("'")) {
+                return expr.substring(1, expr.length - 1).replace(/''/g, "'");
             }
 
             // Interpolated String: $"..."
             if (expr.startsWith('$"') && expr.endsWith('"')) {
-                let content = expr.substring(2, expr.length - 1);
-                return content;
+                return expr.substring(2, expr.length - 1).replace(/""/g, '"');
             }
 
             // Property Access: Object.Property
@@ -75,9 +77,12 @@ const evaluatePowerFx = (expression: string): any => {
                 const lhs = expr.substring(0, dotIndex).trim();
                 const rhs = expr.substring(dotIndex + 1).trim();
 
+                // Handle single quoted rhs
+                const cleanRhs = rhs.startsWith("'") && rhs.endsWith("'") ? rhs.slice(1, -1) : rhs;
+
                 const obj = evaluatePowerFx(lhs);
                 if (obj && typeof obj === 'object') {
-                    return obj[rhs] || "";
+                    return obj[cleanRhs] || "";
                 }
                 return "";
             }
@@ -119,19 +124,32 @@ const evaluatePowerFx = (expression: string): any => {
 const splitTopLevel = (str: string, delimiter: string): string[] => {
     const parts: string[] = [];
     let current = '';
-    let inQuote = false;
+    let inDoubleQuote = false;
+    let inSingleQuote = false;
     let parenDepth = 0;
 
     for (let i = 0; i < str.length; i++) {
         const char = str[i];
-        if (char === '"') {
-            inQuote = !inQuote;
-        } else if (!inQuote) {
+        if (char === '"' && !inSingleQuote) {
+            if (inDoubleQuote && str[i + 1] === '"') {
+                current += '"';
+                i++; // skip next quote
+                continue;
+            }
+            inDoubleQuote = !inDoubleQuote;
+        } else if (char === "'" && !inDoubleQuote) {
+            if (inSingleQuote && str[i + 1] === "'") {
+                current += "'";
+                i++; // skip next quote
+                continue;
+            }
+            inSingleQuote = !inSingleQuote;
+        } else if (!inDoubleQuote && !inSingleQuote) {
             if (char === '(') parenDepth++;
             else if (char === ')') parenDepth--;
         }
 
-        if (char === delimiter && !inQuote && parenDepth === 0) {
+        if (char === delimiter && !inDoubleQuote && !inSingleQuote && parenDepth === 0) {
             parts.push(current);
             current = '';
         } else {
@@ -144,21 +162,26 @@ const splitTopLevel = (str: string, delimiter: string): string[] => {
 
 // Helper: Find last dot, ignoring parens
 const findLastTopLevelDot = (str: string): number => {
-    let inQuote = false;
+    let inDoubleQuote = false;
+    let inSingleQuote = false;
     let parenDepth = 0;
 
-    // Scan backwards
-    // Scan backwards
-    // (Unused backward scan removed)
-
-    // Forward scan
-
-    // Forward scan
     let lastDot = -1;
     for (let i = 0; i < str.length; i++) {
         const char = str[i];
-        if (char === '"') inQuote = !inQuote;
-        else if (!inQuote) {
+        if (char === '"' && !inSingleQuote) {
+            if (inDoubleQuote && str[i + 1] === '"') {
+                i++; // skip next quote
+                continue;
+            }
+            inDoubleQuote = !inDoubleQuote;
+        } else if (char === "'" && !inDoubleQuote) {
+            if (inSingleQuote && str[i + 1] === "'") {
+                i++; // skip next quote
+                continue;
+            }
+            inSingleQuote = !inSingleQuote;
+        } else if (!inDoubleQuote && !inSingleQuote) {
             if (char === '(') parenDepth++;
             else if (char === ')') parenDepth--;
             else if (char === '.' && parenDepth === 0) lastDot = i;
@@ -206,9 +229,10 @@ const processValue = (value: any, context: any = {}, key?: string, controlMap?: 
     if (typeof value !== 'string') return value;
 
     let cleanValue = value.trim();
-    if (cleanValue.startsWith('=')) {
-        cleanValue = cleanValue.substring(1).trim();
-    }
+    // Do NOT strip '=' here anymore, let the evaluator/CSS parser handle it
+    // if (cleanValue.startsWith('=')) {
+    //     cleanValue = cleanValue.substring(1).trim();
+    // }
 
     // SKIP for Action properties
     if (key && key.startsWith('On')) {
@@ -221,43 +245,44 @@ const processValue = (value: any, context: any = {}, key?: string, controlMap?: 
     }
 
     // 3. Handle Colors & Special Literals early
-    const upperValue = cleanValue.toUpperCase();
-    if (upperValue.startsWith('RGBA(')) return cleanValue.toLowerCase();
-    if (cleanValue.startsWith('Color.')) return cleanValue.split('.')[1].toLowerCase();
-    if (cleanValue.includes('LayoutDirection.')) return cleanValue.split('.')[1];
-    if (cleanValue.includes('LayoutAlignItems.')) return cleanValue.split('.')[1];
+    const evalValue = cleanValue.startsWith('=') ? cleanValue.substring(1).trim() : cleanValue;
+    const upperValue = evalValue.toUpperCase();
+    if (upperValue.startsWith('RGBA(')) return evalValue.toLowerCase();
+    if (evalValue.startsWith('Color.')) return evalValue.split('.')[1].toLowerCase();
+    if (evalValue.includes('LayoutDirection.')) return evalValue.split('.')[1];
+    if (evalValue.includes('LayoutAlignItems.')) return evalValue.split('.')[1];
 
-    // 4. PowerFx Data/String Formulas (High Priority)
-    // If it contains &, function calls, or starts with ", it's likely a PowerFx expression
-    const hasLogic = cleanValue.includes('&&') || cleanValue.includes('||');
-    const isPowerFx = !hasLogic && (
-        cleanValue.includes('User(') ||
-        cleanValue.includes('First(') ||
-        cleanValue.includes('Split(') ||
-        cleanValue.includes('EncodeUrl(') ||
-        cleanValue.includes('&') ||
-        cleanValue.startsWith('$')
-    );
-
-    if (isPowerFx) {
-        return evaluatePowerFx(cleanValue);
-    }
-
-    // 5. Formula Parsing for Layout Properties (Math/References)
+    // 4. Formula Parsing for Layout Properties (Math/References)
     // ONLY for specific layout properties and ONLY if not a simple string
     const layoutKeys = ['X', 'Y', 'Width', 'Height', 'PaddingTop', 'PaddingBottom', 'PaddingLeft', 'PaddingRight', 'RadiusTopLeft', 'RadiusTopRight', 'RadiusBottomLeft', 'RadiusBottomRight', 'BorderThickness', 'TemplateSize'];
     const isLayoutProp = key && layoutKeys.includes(key);
 
-    if (isLayoutProp && !cleanValue.startsWith('"')) {
-        const isMath = /[+\-*/]/.test(cleanValue) || cleanValue.includes('Parent.') || cleanValue.includes('Self.');
-        const isReference = controlMap && Object.keys(controlMap).some(n => cleanValue.includes(n + '.'));
+    if (isLayoutProp && !evalValue.startsWith('"')) {
+        const isMath = /[+\-*/]/.test(evalValue) || evalValue.includes('Parent.') || evalValue.includes('Self.');
+        const isReference = controlMap && Object.keys(controlMap).some(n => evalValue.includes(n + '.'));
 
         if (isMath || isReference) {
-            if (cleanValue.trim().startsWith('-')) {
+            if (evalValue.trim().startsWith('-')) {
                 cleanValue = '0px ' + cleanValue;
             }
             return parseFormulaToCSS(cleanValue, context, controlMap);
         }
+    }
+
+    // 5. PowerFx Data/String Formulas (High Priority)
+    // If it contains &, function calls, or starts with ", it's likely a PowerFx expression
+    const hasLogic = evalValue.includes('&&') || evalValue.includes('||');
+    const isPowerFx = !hasLogic && (
+        evalValue.includes('User(') ||
+        evalValue.includes('First(') ||
+        evalValue.includes('Split(') ||
+        evalValue.includes('EncodeUrl(') ||
+        evalValue.includes('&') ||
+        evalValue.startsWith('$')
+    );
+
+    if (isPowerFx) {
+        return evaluatePowerFx(cleanValue);
     }
 
     return cleanValue;
@@ -267,7 +292,12 @@ const processValue = (value: any, context: any = {}, key?: string, controlMap?: 
  * Converts a Power Apps math formula into a CSS calc() string.
  */
 const parseFormulaToCSS = (formula: string, context: any, controlMap?: Record<string, any>): string | number => {
-    let cssExpression = formula
+    let cleanFormula = formula.trim();
+    if (cleanFormula.startsWith('=')) {
+        cleanFormula = cleanFormula.substring(1).trim();
+    }
+
+    let cssExpression = cleanFormula
         .replace(/Parent\.Width/gi, '100%')
         .replace(/Parent\.Height/gi, '100%');
 

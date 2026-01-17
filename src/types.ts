@@ -9,6 +9,7 @@ export interface AppInstance {
     name: string;
     screens: Screen[];
     startScreenId: string | null;
+    mockData?: string | null;
 }
 
 export interface UserWorkspace {

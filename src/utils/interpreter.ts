@@ -10,7 +10,9 @@ export type PowerFxContextState = Record<string, any>;
 export const executePowerFxAction = (
     expression: string,
     currentState: PowerFxContextState,
-    navigationCallback?: (screenName?: string) => void
+    evaluationContext: PowerFxContextState, // Full context including dataSources
+    navigationCallback?: (screenName?: string) => void,
+    notifyCallback?: (message: string) => void
 ): PowerFxContextState => {
     let newState = { ...currentState };
     let expr = expression.trim();
@@ -34,7 +36,10 @@ export const executePowerFxAction = (
         if (setMatch) {
             const varName = setMatch[1];
             const rawValue = setMatch[2];
-            const evaluatedValue = evaluateExpression(rawValue, newState);
+            // console.log(`[DEBUG] executePowerFxAction: Set(${varName}, ${rawValue})`);
+            // Use evaluationContext merged with current session's new variables
+            const evaluatedValue = evaluateExpression(rawValue, { ...evaluationContext, ...newState });
+            // console.log(`[DEBUG] executePowerFxAction: Set(${varName}) evaluated to:`, evaluatedValue);
             newState[varName] = evaluatedValue;
             continue;
         }
@@ -51,7 +56,7 @@ export const executePowerFxAction = (
                 const [key, val] = splitTopLevel(pair, ':');
                 if (key && val) {
                     const varName = key.trim();
-                    const evaluatedValue = evaluateExpression(val.trim(), newState);
+                    const evaluatedValue = evaluateExpression(val.trim(), { ...evaluationContext, ...newState });
                     newState[varName] = evaluatedValue;
                 }
             }
@@ -65,9 +70,11 @@ export const executePowerFxAction = (
         }
 
         // MATCH: Notify(Msg, Type)
-        if (cleanAction.startsWith('Notify(')) {
-            // Just log it
-            console.log('Notify Action:', cleanAction);
+        const notifyMatch = cleanAction.match(/^Notify\(\s*(.+)\s*\)$/);
+        if (notifyMatch) {
+            const rawMsg = notifyMatch[1].split(',')[0].trim();
+            const msg = evaluateExpression(rawMsg, { ...evaluationContext, ...newState });
+            if (notifyCallback) notifyCallback(String(msg));
             continue;
         }
 
@@ -88,33 +95,39 @@ export const executePowerFxAction = (
 };
 
 export const evaluateExpression = (expression: string, context: PowerFxContextState): any => {
-    // 1. If the input is a raw Data URI for an SVG, extract and decode just the SVG content
-    if (typeof expression === 'string' && expression.startsWith('data:image/svg+xml')) {
-        // console.log(`[DEBUG] evaluateExpression: raw data URI detected, extracting SVG`);
+    if (typeof expression !== 'string') return expression;
+    let expr = expression.trim();
 
-        const commaIndex = expression.indexOf(',');
+    // 1. Strip leading '=' if present
+    if (expr.startsWith('=')) {
+        expr = expr.substring(1).trim();
+    }
+    // console.log(`[DEBUG] Evaluating Expression: ${expr}`)
+    // 2. If it's a raw Data URI for an SVG (no quotes), extract and decode
+    if (expr.startsWith('"data:image/svg+xml')) {
+        const commaIndex = expr.indexOf(',');
+        console.log(`[DEBUG] Found commaIndex: ${commaIndex}`)
         if (commaIndex !== -1) {
-            const rawData = expression.substring(commaIndex + 1);
+            const startIndex = expr.indexOf('%');
+            const rawData = expr.substring(startIndex);
+            console.log(`[DEBUG] Found rawData: ${rawData}`)
             try {
-                // decodeURIComponent turns %3Csvg into <svg
                 return decodeURIComponent(rawData);
             } catch (e) {
-                // console.error("Failed to decode SVG data", e);
-                return rawData; // Fallback to raw if decoding fails
+                return rawData;
             }
         }
-        return expression;
     }
 
-    // 2. Otherwise, evaluate as normal
-    let result = _evaluateExpressionInternal(expression, context);
+    // 3. Otherwise, evaluate as normal
+    let result = _evaluateExpressionInternal(expr, context);
 
-    // 3. Check result (in case a formula returned a string)
     const isDataUri = typeof result === 'string' && (result.startsWith('data:') || result.startsWith('"data:'));
     if (isDataUri) return result;
 
     // 4. Wrap math expressions in calc()
-    if (typeof result === 'string' && (result.includes('%') || result.includes('px')) && /[+\-*/]/.test(result) && !result.startsWith('calc(')) {
+    // Skip if it is a Data URI or an SVG
+    if (typeof result === 'string' && !isDataUri && (result.includes('%') || result.includes('px')) && /[+\-*/]/.test(result) && !result.startsWith('calc(')) {
         if (/\d+(px|%)\s*[+\-*/]/.test(result)) {
             result = `calc(${result})`;
         }
@@ -134,6 +147,10 @@ const _evaluateExpressionInternal = (expression: string, context: PowerFxContext
     }
 
     if (!expr) return expr;
+
+
+    // 2. Data URI Literal (Raw)
+    if (expr.startsWith('data:') || expr.startsWith('"data:')) return expr;
 
     // 1. Handle calc() wrapper (often comes from parser.ts)
     if (expr.toLowerCase().startsWith('calc(') && expr.endsWith(')')) {
@@ -164,36 +181,75 @@ const _evaluateExpressionInternal = (expression: string, context: PowerFxContext
     if (expr.toLowerCase() === 'true') return true;
     if (expr.toLowerCase() === 'false') return false;
 
-    // 3. String Literals
+    // 3. Double-Quoted String Literals (PowerFx Strings)
     if (expr.startsWith('"') && expr.endsWith('"')) {
-        return expr.substring(1, expr.length - 1);
+        return expr.substring(1, expr.length - 1).replace(/""/g, '"');
     }
 
-    // Interpolated Strings: $"..."
+    // Interpolated String: $"..."
     if (expr.startsWith('$"') && expr.endsWith('"')) {
-        return expr.substring(2, expr.length - 1);
+        let content = expr.substring(2, expr.length - 1).replace(/""/g, '"');
+        return content.replace(/\{([\s\S]*?)\}/g, (_match, formula) => {
+            return String(evaluateExpression(formula.trim(), context));
+        });
     }
 
-    // 4. Concatenation: & (lower precedence than math in some contexts, but here we handle it explicitly)
-    // We split by & but skip && (handled by splitActions)
-    const ampParts = splitTopLevel(expr, '&');
-    if (ampParts.length > 1) {
-        return ampParts.map(p => {
-            const part = p.trim();
-            // If it's &&, evaluate it as logic? No, splitActions handled top-level &&.
-            // But internal && might still exist. However, single & is usually concatenation.
-            return String(evaluateExpression(part, context));
-        }).join('');
-    }
-
-    // 4. Numeric Literals with Units
+    // 4. Numeric Literals with Units (Atomic)
     const unitMatch = expr.match(/^(-?\d+(\.\d+)?)(px|%|pt|em|rem)?$/);
     if (unitMatch) {
-        if (unitMatch[3]) return expr; // Preserve string if unit is present
+        if (unitMatch[3]) return expr;
         return parseFloat(unitMatch[1]);
     }
 
-    // 5. Dot notation Lookup / Property Access: Object.Property
+    // 5. Logic Operators: &&, ||, !
+    const logicOps = ['&&', '||'];
+    for (const op of logicOps) {
+        const parts = splitTopLevel(expr, op);
+        if (parts.length > 1) {
+            if (op === '&&') return parts.every(p => Boolean(evaluateExpression(p.trim(), context)));
+            if (op === '||') return parts.some(p => Boolean(evaluateExpression(p.trim(), context)));
+        }
+    }
+    if (expr.startsWith('!')) {
+        const subExpr = expr.substring(1).trim();
+        return !evaluateExpression(subExpr, context);
+    }
+
+    // 6. Equality and Comparisons: =, <>, <, >, <=, >=
+    const cmpOps = ['=', '<>', '<=', '>=', '<', '>'];
+    for (const op of cmpOps) {
+        // splitTopLevel handles finding the operator outside of parens/quotes.
+        const parts = splitTopLevel(expr, op);
+        if (parts.length === 2) {
+            const lhs = evaluateExpression(parts[0].trim(), context);
+            const rhs = evaluateExpression(parts[1].trim(), context);
+            switch (op) {
+                case '=': return (String(lhs) === String(rhs)); // Coerce to string for simple comparison
+                case '<>': return (String(lhs) !== String(rhs));
+                case '<=': return (parseFloat(lhs) <= parseFloat(rhs));
+                case '>=': return (parseFloat(lhs) >= parseFloat(rhs));
+                case '<': return (parseFloat(lhs) < parseFloat(rhs));
+                case '>': return (parseFloat(lhs) > parseFloat(rhs));
+            }
+        }
+    }
+
+    // 7. Concatenation: &
+    if (expr.includes('&') && !expr.includes('&&')) {
+        const ampParts = splitTopLevel(expr, '&');
+        if (ampParts.length > 1) {
+            return ampParts.map(p => String(evaluateExpression(p.trim(), context))).join('');
+        }
+    }
+
+    // 8. Arithmetic: +, -, *, /
+    if (/[+\-*/]/.test(expr) && !expr.startsWith('data:') && !expr.startsWith('"data:')) {
+        if (/\d/.test(expr) || expr.includes('Parent.') || expr.includes('Self.')) {
+            return evaluateArithmetic(expr, context);
+        }
+    }
+
+    // 9. Dot notation Lookup / Property Access: Object.Property
     if (expr.includes('.')) {
         const dotIndex = findLastTopLevelDot(expr);
         if (dotIndex !== -1) {
@@ -201,33 +257,17 @@ const _evaluateExpressionInternal = (expression: string, context: PowerFxContext
             const rhs = expr.substring(dotIndex + 1).trim();
 
             const obj = evaluateExpression(lhs, context);
+            const cleanRhs = rhs.startsWith("'") && rhs.endsWith("'") ? rhs.slice(1, -1).replace(/''/g, "'") : rhs;
+
             if (obj && typeof obj === 'object') {
-                return obj[rhs] !== undefined ? obj[rhs] : expr;
+                const val = (obj as any)[cleanRhs];
+                return val !== undefined ? val : expr;
             }
         }
     }
 
-    // 6. Variable / Control Lookup
-    if (/^[a-zA-Z0-9_]+$/.test(expr)) {
-        if (context[expr] !== undefined) {
-            return context[expr];
-        }
-        return expr;
-    }
-
-    // 7. Arithmetic: +, -, *, /
-    if (/[+\-*/]/.test(expr)) {
-        return evaluateArithmetic(expr, context);
-    }
-
-    // 8. Logic Operators: Or(), And(), Not(), !
-    if (expr.startsWith('!')) {
-        const subExpr = expr.substring(1).trim();
-        return !evaluateExpression(subExpr, context);
-    }
-
-    // Function Calls
-    const funcMatch = expr.match(/^([a-zA-Z0-9_]+)\((.*)\)$/);
+    // 10. Function Calls: Func(...)
+    const funcMatch = expr.match(/^([a-zA-Z0-9_\u00c0-\u017f ]+)\(([\s\S]*)\)$/);
     if (funcMatch) {
         const fnName = funcMatch[1].toLowerCase();
         const argsStr = funcMatch[2];
@@ -243,6 +283,54 @@ const _evaluateExpressionInternal = (expression: string, context: PowerFxContext
             case 'if':
                 if (args[0]) return args[1];
                 return args[2];
+            case 'filter': {
+                const source = args[0];
+                // console.log(`[DEBUG] Filter: source is`, source);
+                if (!Array.isArray(source)) {
+                    // console.warn(`[DEBUG] Filter: source is not an array!`);
+                    return [];
+                }
+
+                const rawArgs = splitTopLevel(argsStr, ',');
+                if (rawArgs.length < 2) return source;
+
+                const conditions = rawArgs.slice(1);
+                // console.log(`[DEBUG] Filter: conditions are`, conditions);
+
+                const result = source.filter((item) => {
+                    // Evaluate each condition with the item as context (ThisItem)
+                    const match = conditions.every(cond => {
+                        const evalResult = evaluateExpression(cond.trim(), { ...context, ThisItem: item, ...item });
+                        return Boolean(evalResult) === true;
+                    });
+                    return match;
+                });
+                // console.log(`[DEBUG] Filter: result has ${result.length} items`);
+                return result;
+            }
+            case 'user':
+                // Return a mock user object if not provided in context
+                return context.User || {
+                    Email: "mock@example.com",
+                    FullName: "Mock User",
+                    Image: ""
+                };
+            case 'countrows':
+                const count = Array.isArray(args[0]) ? args[0].length : 0;
+                // console.log(`[DEBUG] CountRows: arg is`, args[0], `count is`, count);
+                return count;
+            case 'split': {
+                const text = String(args[0] || "");
+                const sep = String(args[1] || "");
+                return text.split(sep).map(s => ({ Result: s, Value: s }));
+            }
+            case 'first': {
+                const list = args[0];
+                if (Array.isArray(list) && list.length > 0) {
+                    return list[0];
+                }
+                return { Result: "", Value: "" };
+            }
             case 'encodeurl':
                 return encodeURIComponent(String(args[0] || ""));
             default:
@@ -250,14 +338,20 @@ const _evaluateExpressionInternal = (expression: string, context: PowerFxContext
         }
     }
 
-    // 9. Inline Logic: A && B, A || B, A = B
-    if (expr.includes('=')) {
-        const parts = splitTopLevel(expr, '=');
-        if (parts.length === 2) {
-            const lhs = evaluateExpression(parts[0], context);
-            const rhs = evaluateExpression(parts[1], context);
-            return (lhs == rhs);
+    // 11. Simple Identifier / Variable Lookup
+    const isQuotedIdentifier = expr.startsWith("'") && expr.endsWith("'");
+    const cleanId = isQuotedIdentifier ? expr.slice(1, -1).replace(/''/g, "'") : expr;
+
+    // Use a regex that requires at least one letter for unquoted identifiers
+    if (isQuotedIdentifier || /^[a-zA-Z_\u00c0-\u017f][a-zA-Z0-9_\u00c0-\u017f ]*$/.test(expr)) {
+        if (context[cleanId] !== undefined) {
+            return context[cleanId];
         }
+        if (isQuotedIdentifier) {
+            // console.log(`[DEBUG] Quoted identifier [${cleanId}] not found in context keys:`, Object.keys(context));
+            return undefined;
+        }
+        return expr; // Fallback to raw string if not found (might be a property name or literal)
     }
 
     return expr;
@@ -319,17 +413,30 @@ const evaluateArithmetic = (expression: string, context: PowerFxContextState): a
     return expression;
 };
 
+
 /**
  * Helper: Find last dot, ignoring parens
  */
 const findLastTopLevelDot = (str: string): number => {
-    let inQuote = false;
+    let inDoubleQuote = false;
+    let inSingleQuote = false;
     let parenDepth = 0;
     let lastDot = -1;
     for (let i = 0; i < str.length; i++) {
         const char = str[i];
-        if (char === '"') inQuote = !inQuote;
-        else if (!inQuote) {
+        if (char === '"' && !inSingleQuote) {
+            if (inDoubleQuote && str[i + 1] === '"') {
+                i++; // skip next quote
+                continue;
+            }
+            inDoubleQuote = !inDoubleQuote;
+        } else if (char === "'" && !inDoubleQuote) {
+            if (inSingleQuote && str[i + 1] === "'") {
+                i++; // skip next quote
+                continue;
+            }
+            inSingleQuote = !inSingleQuote;
+        } else if (!inDoubleQuote && !inSingleQuote) {
             if (char === '(') parenDepth++;
             else if (char === ')') parenDepth--;
             else if (char === '.' && parenDepth === 0) lastDot = i;
@@ -343,24 +450,54 @@ const findLastTopLevelDot = (str: string): number => {
 const splitTopLevel = (str: string, delimiter: string): string[] => {
     const parts: string[] = [];
     let current = '';
-    let inQuote = false;
+    let inDoubleQuote = false;
+    let inSingleQuote = false;
     let parenDepth = 0;
     let braceDepth = 0;
 
+    const delimLen = delimiter.length;
+
     for (let i = 0; i < str.length; i++) {
         const char = str[i];
-        if (char === '"') {
-            inQuote = !inQuote;
-        } else if (!inQuote) {
+        if (char === '"' && !inSingleQuote) {
+            if (inDoubleQuote && str[i + 1] === '"') {
+                current += '"';
+                i++; // skip next quote
+                continue;
+            }
+            inDoubleQuote = !inDoubleQuote;
+        } else if (char === "'" && !inDoubleQuote) {
+            if (inSingleQuote && str[i + 1] === "'") {
+                current += "'";
+                i++; // skip next quote
+                continue;
+            }
+            inSingleQuote = !inSingleQuote;
+        } else if (!inDoubleQuote && !inSingleQuote) {
             if (char === '(') parenDepth++;
             else if (char === ')') parenDepth--;
             else if (char === '{') braceDepth++;
             else if (char === '}') braceDepth--;
         }
 
-        if (char === delimiter && !inQuote && parenDepth === 0 && braceDepth === 0) {
+        // Check for delimiter
+        const isDelim = !inDoubleQuote && !inSingleQuote && parenDepth === 0 && braceDepth === 0 &&
+            str.substring(i, i + delimLen) === delimiter;
+
+        if (isDelim) {
+            // Guard: If we are splitting by '&', don't split if it's '&&'
+            if (delimiter === '&' && str[i + 1] === '&') {
+                current += char;
+                continue;
+            }
+            if (delimiter === '&' && i > 0 && str[i - 1] === '&') {
+                current += char;
+                continue;
+            }
+
             parts.push(current);
             current = '';
+            i += delimLen - 1; // skip rest of delimiter
         } else {
             current += char;
         }
@@ -371,21 +508,29 @@ const splitTopLevel = (str: string, delimiter: string): string[] => {
 
 // Helper to split actions by ; or &&
 const splitActions = (str: string): string[] => {
-    // We want to split by ';' OR '&&'
-    // But we need to be careful.
-    // Let's normalize '&&' to ';' for splitting purposes? No, that modifies content.
-    // We can use the same splitTopLevel logic but check for multiple delimiters.
-
     const parts: string[] = [];
     let current = '';
-    let inQuote = false;
+    let inDoubleQuote = false;
+    let inSingleQuote = false;
     let parenDepth = 0;
 
     for (let i = 0; i < str.length; i++) {
         const char = str[i];
-        if (char === '"') {
-            inQuote = !inQuote;
-        } else if (!inQuote) {
+        if (char === '"' && !inSingleQuote) {
+            if (inDoubleQuote && str[i + 1] === '"') {
+                current += '"';
+                i++; // skip next quote
+                continue;
+            }
+            inDoubleQuote = !inDoubleQuote;
+        } else if (char === "'" && !inDoubleQuote) {
+            if (inSingleQuote && str[i + 1] === "'") {
+                current += "'";
+                i++; // skip next quote
+                continue;
+            }
+            inSingleQuote = !inSingleQuote;
+        } else if (!inDoubleQuote && !inSingleQuote) {
             if (char === '(') parenDepth++;
             else if (char === ')') parenDepth--;
         }
@@ -393,7 +538,7 @@ const splitActions = (str: string): string[] => {
         let isDelimiter = false;
         let delimLength = 0;
 
-        if (!inQuote && parenDepth === 0) {
+        if (!inDoubleQuote && !inSingleQuote && parenDepth === 0) {
             if (char === ';') {
                 isDelimiter = true;
                 delimLength = 1;
