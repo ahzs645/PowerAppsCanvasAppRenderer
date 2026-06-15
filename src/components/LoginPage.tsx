@@ -1,6 +1,6 @@
 import React from 'react';
 import { SignInButton } from "@clerk/clerk-react";
-import { FluentProvider, webDarkTheme, Button, Text, Card, CardHeader } from '@fluentui/react-components';
+import { FluentProvider, webDarkTheme, Button, Text } from '@fluentui/react-components';
 import { Shield, Users } from 'lucide-react';
 
 interface LoginPageProps {

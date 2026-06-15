@@ -5,6 +5,8 @@ import {
     ImageRegular,
     ChevronLeftRegular,
     ChevronRightRegular,
+    ChevronDownRegular,
+    ChevronUpRegular,
     DismissRegular,
     CheckmarkRegular,
     ArrowDownloadRegular,
@@ -22,8 +24,11 @@ import { ImageUpload } from './ImageUpload';
 const ICON_MAP: Record<string, React.FC<any>> = {
     'icon.chevronleft': ChevronLeftRegular,
     'icon.chevronright': ChevronRightRegular,
+    'icon.chevrondown': ChevronDownRegular,
+    'icon.chevronup': ChevronUpRegular,
     'icon.cancel': DismissRegular,
     'icon.check': CheckmarkRegular,
+    'icon.checkmark': CheckmarkRegular,
     'icon.download': ArrowDownloadRegular,
     'icon.edit': EditRegular,
     'icon.add': AddRegular,
@@ -34,9 +39,41 @@ const ICON_MAP: Record<string, React.FC<any>> = {
     // Add more mappings as needed
 };
 
+// Maps a Power Apps FontWeight enum string to a CSS weight.
+const fontWeightOf = (v: any): number => {
+    const s = String(v || '').toLowerCase();
+    if (s.includes('semibold')) return 600;
+    if (s.includes('bold')) return 700;
+    if (s.includes('lighter')) return 300;
+    return 400;
+};
+
+// Resolves Align / VerticalAlign enum strings.
+const textAlignOf = (v: any): 'left' | 'center' | 'right' => {
+    const s = String(v || '').toLowerCase();
+    if (s.includes('center')) return 'center';
+    if (s.includes('right')) return 'right';
+    return 'left';
+};
+const vAlignOf = (v: any): 'flex-start' | 'center' | 'flex-end' => {
+    const s = String(v || '').toLowerCase();
+    if (s.includes('top') || s.includes('start')) return 'flex-start';
+    if (s.includes('bottom') || s.includes('end')) return 'flex-end';
+    return 'center';
+};
+
+// Safely coerce any Power Fx value (incl. Date / record / table) to a display string.
+// Prevents "Objects are not valid as a React child" crashes.
+export const toDisplay = (v: any): string => {
+    if (v == null) return '';
+    if (v instanceof Date) return isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10);
+    if (typeof v === 'object') return '';
+    return String(v);
+};
+
 export const DropdownRenderer: React.FC<{ props: any }> = ({ props }) => (
     <Dropdown
-        placeholder={props.Default || 'Select...'}
+        placeholder={typeof props.Default === 'string' ? props.Default : 'Select...'}
         style={{
             width: '100%',
             height: '100%',
@@ -65,7 +102,7 @@ export const ComboboxRenderer: React.FC<{ props: any }> = ({ props }) => {
     return (
         <div style={{ width: '100%', height: '100%' }} title={props.Tooltip}>
             <Dropdown
-                placeholder={props.Default || 'Select...'}
+                placeholder={typeof props.Default === 'string' ? props.Default : 'Select...'}
                 multiselect={props.SelectMultiple}
                 disabled={isDisabled}
                 style={{
@@ -91,19 +128,19 @@ export const ComboboxRenderer: React.FC<{ props: any }> = ({ props }) => {
 };
 
 export const LabelRenderer: React.FC<{ props: any }> = ({ props }) => {
-    const verticalAlign = props.VerticalAlign?.toLowerCase().replace('verticalalign.', '') || 'middle';
-    const justifyContent = verticalAlign === 'top' ? 'flex-start' : (verticalAlign === 'bottom' ? 'flex-end' : 'center');
-
-    const textAlign = props.Align?.toLowerCase().replace('align.', '') || 'left';
-    const alignItems = textAlign === 'center' ? 'center' : (textAlign === 'right' ? 'flex-end' : 'flex-start');
+    const textAlign = textAlignOf(props.Align);
+    const justifyContent = vAlignOf(props.VerticalAlign);
+    // AutoHeight (or Wrap) lets text wrap; otherwise clamp to one clipped line.
+    const wrap = props.AutoHeight === true || props.AutoHeight === 'true' || props.Wrap === true;
+    const fontSize = Number(props.Size) || 14;
 
     return (
         <div
             style={{
                 display: 'flex',
                 flexDirection: 'column',
-                justifyContent: justifyContent,
-                alignItems: alignItems,
+                justifyContent,
+                alignItems: textAlign === 'center' ? 'center' : (textAlign === 'right' ? 'flex-end' : 'flex-start'),
                 height: '100%',
                 width: '100%',
                 overflow: 'hidden',
@@ -115,25 +152,26 @@ export const LabelRenderer: React.FC<{ props: any }> = ({ props }) => {
                 border: (props.BorderThickness > 0 && props.BorderColor) ? `${props.BorderThickness}px solid ${props.BorderColor}` : undefined,
                 borderRadius: props.BorderRadius ? `${props.BorderRadius}px` : undefined,
                 cursor: props.OnSelect ? 'pointer' : 'default',
+                boxSizing: 'border-box',
             }}
-            onClick={props.OnSelect ? () => {
-                if (props._onAction) props._onAction(props.OnSelect);
-            } : undefined}
+            onClick={props.OnSelect ? () => { if (props._onAction) props._onAction(props.OnSelect, props._itemContext, props); } : undefined}
         >
-            <Text
-                size={(props.Size ? props.Size * 20 : 400) as any}
+            <span
                 style={{
-                    color: props.FontColor || props.Color || 'black',
+                    color: props.FontColor || props.Color || '#323338',
                     textAlign: textAlign as any,
-                    fontWeight: (props.Weight || props.FontWeight)?.includes('Bold') ? 'bold' : 'normal',
-                    whiteSpace: props.Wrap ? 'normal' : 'nowrap',
-                    textOverflow: props.Wrap ? 'clip' : 'ellipsis',
-                    width: textAlign === 'left' ? 'auto' : '100%',
+                    fontSize: `${fontSize}px`,
+                    fontWeight: fontWeightOf(props.FontWeight || props.Weight),
+                    fontFamily: props.Font ? String(props.Font).replace(/^Font\./, '').replace(/'/g, '') : undefined,
+                    lineHeight: 1.25,
+                    whiteSpace: wrap ? 'normal' : 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: wrap ? 'clip' : 'ellipsis',
+                    width: '100%',
                 }}
-                aria-live={props.Live}
             >
-                {props.Text || ''}
-            </Text>
+                {toDisplay(props.Text)}
+            </span>
         </div>
     );
 };
@@ -166,11 +204,13 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
     const fontWeight = (props.Weight || props.FontWeight)?.toLowerCase().includes('bold') ? 'bold' : ((props.Weight || props.FontWeight)?.toLowerCase().includes('semibold') ? '600' : 'normal');
 
     // Appearance mapping
-    const appearance = props.Appearance?.toLowerCase().includes('subtle') ? 'subtle' :
-        (props.Appearance?.toLowerCase().includes('outline') ? 'outline' :
-            (props.Appearance?.toLowerCase().includes('transparent') ? 'transparent' :
-                (props.Appearance?.toLowerCase().includes('primary') ? 'primary' :
-                    (effectiveFill === 'transparent' ? 'transparent' : 'primary'))));
+    const appStr = String(props.Appearance || '').toLowerCase();
+    const appearance = appStr.includes('subtle') ? 'subtle' :
+        (appStr.includes('outline') ? 'outline' :
+            (appStr.includes('transparent') ? 'transparent' :
+                (appStr.includes('secondary') ? 'secondary' :
+                    (appStr.includes('primary') ? 'primary' :
+                        (effectiveFill === 'transparent' || effectiveFill === undefined ? 'transparent' : 'primary')))));
 
     const isDisabled = props.DisplayMode === 'Disabled' || props.DisplayMode === 'View';
 
@@ -185,7 +225,7 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
             icon={IconComponent ? <IconComponent /> : undefined}
             onClick={() => {
                 if (props.OnSelect && props._onAction && !isDisabled) {
-                    props._onAction(props.OnSelect);
+                    props._onAction(props.OnSelect, props._itemContext, props);
                 }
             }}
             style={{
@@ -217,50 +257,30 @@ export const ButtonRenderer: React.FC<{ props: any }> = ({ props }) => {
 // ... (LabelRenderer, ButtonRenderer)
 
 export const TextInputRenderer: React.FC<{ props: any }> = ({ props }) => {
-    const [isHovered, setIsHovered] = React.useState(false);
+    const initial = props.Value != null ? String(props.Value) : (props.Default != null ? String(props.Default) : '');
+    const [value, setValue] = React.useState(initial);
+    React.useEffect(() => { setValue(initial); /* eslint-disable-next-line */ }, [initial]);
     const isDisabled = props.DisplayMode === 'Disabled' || props.DisplayMode === 'View';
-
-    // Calculate disabled styles
-    let borderColor = isDisabled ? (props.DisabledBorderColor || props.BorderColor) : props.BorderColor;
-    let color = isDisabled ? (props.DisabledColor || props.Color) : props.Color;
-    let fill = isDisabled ? (props.DisabledFill || props.Fill) : props.Fill;
-    const borderThickness = props.BorderThickness || 1;
-
-    // Apply hover styles if not disabled
-    if (!isDisabled && isHovered) {
-        if (props.HoverFill) fill = props.HoverFill;
-        if (props.HoverBorderColor) borderColor = props.HoverBorderColor;
-        // HoverColor if exists?
-    }
+    const fontSize = Number(props.Size) || 14;
 
     return (
-        <div
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
-            style={{ width: '100%', height: '100%' }}
-            title={props.Tooltip} // Handle Tooltip
-        >
+        <div style={{ width: '100%', height: '100%' }} title={props.Tooltip}>
             <Input
-                value={props.Default || ''}
-                placeholder={props.HintText || ''}
+                value={value}
+                placeholder={props.Placeholder || props.HintText || ''}
                 disabled={isDisabled}
-                maxLength={props.MaxLength} // Handle MaxLength
+                appearance="outline"
+                onChange={(_e, data) => {
+                    setValue(data.value);
+                    if (props.OnChange && props._onAction) props._onAction(props.OnChange, props._itemContext, { ...props, Text: data.value });
+                }}
                 style={{
                     width: '100%',
                     height: '100%',
-                    backgroundColor: fill,
-                    color: color,
-                    borderColor: borderColor,
-                    filter: isDisabled ? 'grayscale(100%)' : undefined,
+                    backgroundColor: props.Fill || '#fff',
+                    color: props.Color,
                     fontFamily: props.Font,
-                    borderWidth: borderThickness,
-
-                    // New properties
-                    paddingLeft: props.PaddingLeft ? `${props.PaddingLeft}px` : undefined,
-                    borderTopLeftRadius: props.RadiusTopLeft ? `${props.RadiusTopLeft}px` : undefined,
-                    borderTopRightRadius: props.RadiusTopRight ? `${props.RadiusTopRight}px` : undefined,
-                    borderBottomLeftRadius: props.RadiusBottomLeft ? `${props.RadiusBottomLeft}px` : undefined,
-                    borderBottomRightRadius: props.RadiusBottomRight ? `${props.RadiusBottomRight}px` : undefined,
+                    fontSize: `${fontSize}px`,
                 }}
             />
         </div>
@@ -392,7 +412,7 @@ export const DatePickerRenderer: React.FC<{ props: any }> = ({ props }) => {
                 fontWeight: props.FontWeight,
                 opacity: isDisabled ? 0.8 : 1
             }}>
-            <Text style={{ color: 'inherit', fontWeight: 'inherit' }}>{props.DefaultDate || 'Select Date'}</Text>
+            <Text style={{ color: 'inherit', fontWeight: 'inherit' }}>{toDisplay(props.DefaultDate) || toDisplay(props.SelectedDate) || 'Select a date'}</Text>
             <CalendarMonthRegular style={{ marginLeft: 'auto', color: props.IconFill, backgroundColor: props.IconBackground }} />
         </div>
     )
@@ -403,18 +423,17 @@ export const DatePickerRenderer: React.FC<{ props: any }> = ({ props }) => {
 
 
 export const IconRenderer: React.FC<{ props: any }> = ({ props }) => {
-    const iconName = props.Icon?.toLowerCase();
-    const IconComponent = ICON_MAP[iconName] || ICON_MAP[iconName?.replace('icon.', '')] || StarRegular; // Default to star if unknown
+    const iconName = String(props.Icon || '').toLowerCase();
+    const IconComponent = ICON_MAP[iconName] || ICON_MAP[iconName.replace('icon.', '')] || StarRegular; // Default to star if unknown
 
     return (
-
         <div
             onClick={() => {
-                if (props.OnSelect && props._onAction) props._onAction(props.OnSelect);
+                if (props.OnSelect && props._onAction) props._onAction(props.OnSelect, props._itemContext, props);
             }}
             title={props.Tooltip}
             style={{
-                color: props.Color || 'inherit',
+                color: props.IconColor || props.Color || 'inherit',
                 width: '100%',
                 height: '100%',
                 display: 'flex',
@@ -423,7 +442,34 @@ export const IconRenderer: React.FC<{ props: any }> = ({ props }) => {
                 transform: props.Rotation ? `rotate(${props.Rotation}deg)` : undefined,
                 cursor: props.OnSelect ? 'pointer' : 'default'
             }}>
-            <IconComponent style={{ fontSize: props.Height || 20, width: '100%', height: '100%' }} />
+            <IconComponent style={{ fontSize: Number(props.Height) || 20, width: '100%', height: '100%' }} />
+        </div>
+    );
+};
+
+export const ToggleRenderer: React.FC<{ props: any }> = ({ props }) => {
+    const [checked, setChecked] = React.useState(Boolean(props.Checked || props.Default));
+    React.useEffect(() => { setChecked(Boolean(props.Checked || props.Default)); }, [props.Checked, props.Default]);
+    const onColor = props.TrueFill || 'rgba(0, 115, 234, 1)';
+    return (
+        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center' }}>
+            <div
+                onClick={() => {
+                    const next = !checked;
+                    setChecked(next);
+                    const action = next ? props.OnCheck : props.OnUncheck;
+                    if (action && props._onAction) props._onAction(action, props._itemContext, props);
+                }}
+                style={{
+                    width: 40, height: 20, borderRadius: 10, position: 'relative', cursor: 'pointer',
+                    backgroundColor: checked ? onColor : 'rgba(0,0,0,0.25)', transition: 'background-color 0.15s',
+                }}
+            >
+                <div style={{
+                    width: 16, height: 16, borderRadius: '50%', background: '#fff', position: 'absolute',
+                    top: 2, left: checked ? 22 : 2, transition: 'left 0.15s', boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                }} />
+            </div>
         </div>
     );
 };

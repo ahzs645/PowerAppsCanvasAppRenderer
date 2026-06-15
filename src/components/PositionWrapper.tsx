@@ -1,4 +1,5 @@
 import React from 'react';
+import { useInspect } from '../context/InspectContext';
 
 interface PositionWrapperProps {
     x?: number | string;
@@ -34,6 +35,7 @@ const PositionWrapper: React.FC<PositionWrapperProps> = ({
     children
 }) => {
     const [isHovered, setIsHovered] = React.useState(false);
+    const inspect = useInspect();
 
     // Simple conversion: if it's a number, add px. If it's a string (like a formula), we'll deal with it later.
     const style: React.CSSProperties = {
@@ -48,38 +50,37 @@ const PositionWrapper: React.FC<PositionWrapperProps> = ({
         alignSelf: isParentAutoLayout ? 'stretch' : undefined,
         boxSizing: 'border-box',
         overflow: 'hidden',
-        // Actually for highlighting we might want z-index.
-        zIndex: isSelected ? 1001 : (isHighlighted || isHovered ? 1000 : undefined),
-        outline: isSelected ? '2px solid #0078d4' : (isHighlighted ? '1px solid red' : (isHovered ? '1px dashed #0078d4' : 'none')),
-        borderRadius: (isSelected || isHovered) ? '4px' : undefined,
-        boxShadow: isSelected ? '0 0 15px rgba(0, 120, 212, 0.4)' : (isHighlighted ? '0 0 10px rgba(255, 0, 0, 0.3)' : (isHovered ? '0 0 5px rgba(0, 120, 212, 0.2)' : 'none')),
-        cursor: 'pointer',
-        transition: 'outline 0.1s ease-in-out, box-shadow 0.1s ease-in-out',
-        backgroundColor: isHovered && !isSelected ? 'rgba(0, 120, 212, 0.05)' : undefined
     };
 
-    if (name === 'ContainerHeader') {
-        console.log(`[DEBUG] PositionWrapper ${name}: fillPortions=${fillPortions}, width=${width}, height=${height}, flex=${style.flex}`);
+    // Editor-focus chrome (hover dashed outline, selection highlight). Only when inspect mode is on.
+    if (inspect) {
+        style.zIndex = isSelected ? 1001 : (isHighlighted || isHovered ? 1000 : undefined);
+        style.outline = isSelected ? '2px solid #0078d4' : (isHighlighted ? '1px solid red' : (isHovered ? '1px dashed #0078d4' : 'none'));
+        style.borderRadius = (isSelected || isHovered) ? '4px' : undefined;
+        style.boxShadow = isSelected ? '0 0 15px rgba(0, 120, 212, 0.4)' : (isHighlighted ? '0 0 10px rgba(255, 0, 0, 0.3)' : (isHovered ? '0 0 5px rgba(0, 120, 212, 0.2)' : 'none'));
+        style.cursor = 'pointer';
+        style.transition = 'outline 0.1s ease-in-out, box-shadow 0.1s ease-in-out';
+        style.backgroundColor = isHovered && !isSelected ? 'rgba(0, 120, 212, 0.05)' : undefined;
     }
 
     return (
         <div
             style={style}
             data-control-name={name}
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
-            onContextMenu={(e) => {
+            onMouseEnter={inspect ? () => setIsHovered(true) : undefined}
+            onMouseLeave={inspect ? () => setIsHovered(false) : undefined}
+            onContextMenu={inspect ? (e) => {
                 if (onContextMenu && name) {
                     e.stopPropagation();
                     onContextMenu(e, name);
                 }
-            }}
-            onClick={(e) => {
+            } : undefined}
+            onClick={inspect ? (e) => {
                 if (onSelect && name) {
                     e.stopPropagation();
                     onSelect(name);
                 }
-            }}
+            } : undefined}
         >
             {children}
         </div>

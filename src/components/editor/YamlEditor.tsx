@@ -19,7 +19,8 @@ import { usePowerFx } from '../../context/PowerFxContext';
 
 // Internal VariablesDisplay component (moved from App.tsx)
 const VariablesDisplay: React.FC<{ onExpandVariable: (varName: string, expanded: boolean) => void }> = ({ onExpandVariable }) => {
-    const { variables, execute } = usePowerFx();
+    const { store, execute } = usePowerFx();
+    const variables = store.vars;
     const hasVariables = Object.keys(variables).length > 0;
 
     if (!hasVariables) {

@@ -8,7 +8,6 @@ import {
     RectangleRenderer,
     IconRenderer,
     ImageRenderer,
-    GalleryRenderer,
     DatePickerRenderer,
     CircleRenderer,
     GroupContainerRenderer,
@@ -16,7 +15,8 @@ import {
     FormRenderer,
     TypedDataCardRenderer,
     ComboboxRenderer,
-    ScreenRenderer
+    ScreenRenderer,
+    ToggleRenderer,
 } from './renderers/BasicRenderers';
 
 interface ControlMapperProps {
@@ -33,6 +33,8 @@ interface ControlMapperProps {
     itemContext?: any;
 }
 
+const SKIP_KEYS = new Set(['As', 'ControlName', '_Children', 'Control', '_ControlType', 'Properties', 'Variant']);
+
 const ControlMapper: React.FC<ControlMapperProps> = ({
     control,
     highlightedControls,
@@ -44,24 +46,17 @@ const ControlMapper: React.FC<ControlMapperProps> = ({
     selectedControlName,
     onSelectControl,
     onContextMenu,
-    itemContext
+    itemContext,
 }) => {
-    const { evaluate, execute, registerControl } = usePowerFx();
-    const type = control.As.toLowerCase();
+    const { evaluate, execute, registerControl, version } = usePowerFx();
 
     if (!control || !control.As) return null;
+    const type = control.As.toLowerCase();
 
-    // Handle Visible property
-    if (control.Visible !== undefined) {
-        const isVisible = evaluate(String(control.Visible), control, parentProps, itemContext);
-        if (isVisible === false) return null;
-    }
-
-    // Evaluate all properties to handle dynamic constraints (Variables, Formulas)
+    // Evaluate all properties (lazy formulas -> values) for this control.
     const evaluatedControl = React.useMemo(() => {
         const result: any = { ...control };
 
-        // Add defaults for Screen to provide context for children (Parent.Width etc)
         if (type === 'screen') {
             result.X = result.X ?? 0;
             result.Y = result.Y ?? 0;
@@ -69,39 +64,56 @@ const ControlMapper: React.FC<ControlMapperProps> = ({
             result.Height = result.Height ?? '100%';
         }
 
-        Object.keys(control).forEach(key => {
-            if (key === 'As' || key === 'ControlName' || key === '_Children' || key === 'Control' || key === 'Properties' || key === 'Variant') {
-                return;
-            }
-            if (key.startsWith('On')) return;
+        // Galleries: evaluate Items first so Self.AllItems is available to other props.
+        let allItems: any;
+        if (type === 'gallery' && typeof control.Items === 'string') {
+            allItems = evaluate(control.Items, result, parentProps, itemContext);
+            result.Items = Array.isArray(allItems) ? allItems : [];
+        }
+        const selfForEval = type === 'gallery' ? { ...result, AllItems: result.Items } : result;
 
+        const selfRefKeys: string[] = [];
+        Object.keys(control).forEach(key => {
+            if (SKIP_KEYS.has(key) || key.startsWith('On')) return;
+            if (type === 'gallery' && key === 'Items') return;
             const rawValue = control[key];
             if (typeof rawValue === 'string') {
-                try {
-                    result[key] = evaluate(rawValue, control, parentProps, itemContext);
-                } catch (e) {
-                    console.warn(`Failed to evaluate property ${key} for ${control.ControlName}:`, e);
-                }
+                result[key] = evaluate(rawValue, selfForEval, parentProps, itemContext);
+                if (rawValue.includes('Self.')) selfRefKeys.push(key);
             }
         });
-        return result;
-    }, [control, parentProps, evaluate, itemContext]);
 
-    // Register this control's evaluated properties so others can refer to it
-    React.useEffect(() => {
-        registerControl(control.ControlName, evaluatedControl);
-    }, [control.ControlName, evaluatedControl, registerControl]);
-
-    // Handle OnVisible
-    React.useEffect(() => {
-        if (control.OnVisible) {
-            execute(control.OnVisible);
+        // Second pass: resolve props that referenced Self.<sibling> now that
+        // siblings are evaluated.
+        if (selfRefKeys.length) {
+            const self2 = type === 'gallery' ? { ...result, AllItems: result.Items } : { ...result };
+            for (const key of selfRefKeys) {
+                result[key] = evaluate(control[key], self2, parentProps, itemContext);
+            }
         }
+        return result;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [control, parentProps, evaluate, itemContext, version]);
+
+    // Register evaluated props + OnSelect handler for cross-control refs / Select().
+    React.useEffect(() => {
+        registerControl(control.ControlName, evaluatedControl, control.OnSelect);
+    }, [control.ControlName, evaluatedControl, registerControl, control.OnSelect]);
+
+    // Fire OnVisible once on mount.
+    React.useEffect(() => {
+        if (control.OnVisible) execute(control.OnVisible, itemContext, evaluatedControl);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Visibility (undefined / blank -> hidden, matching Power Apps).
+    if (control.Visible !== undefined) {
+        const v = evaluatedControl.Visible;
+        if (v === false || v === null || v === undefined || v === '' || v === 0 || v === 'false') return null;
+    }
 
     const isHighlighted = highlightedControls?.has(control.ControlName);
 
-    // Extract common positioning props using EVALUATED values
     const positionProps = {
         x: type === 'screen' ? 0 : evaluatedControl.X,
         y: type === 'screen' ? 0 : evaluatedControl.Y,
@@ -109,41 +121,40 @@ const ControlMapper: React.FC<ControlMapperProps> = ({
         height: type === 'screen' ? '100%' : evaluatedControl.Height,
         minWidth: evaluatedControl.LayoutMinWidth,
         minHeight: evaluatedControl.LayoutMinHeight,
-        fillPortions: evaluatedControl.LayoutGrow !== undefined ? Number(evaluatedControl.LayoutGrow) : evaluatedControl.FillPortions,
+        fillPortions: evaluatedControl.FillPortions !== undefined ? Number(evaluatedControl.FillPortions) : undefined,
         name: control.ControlName,
-        isHighlighted: isHighlighted,
+        isHighlighted,
         isSelected: selectedControlName === control.ControlName,
         onSelect: onSelectControl,
-        onContextMenu: onContextMenu
+        onContextMenu,
     };
 
-    // Prepare extended props with execute context and evaluated values
     const extendedProps = {
         ...evaluatedControl,
-        _onAction: execute
+        _onAction: execute,
+        _itemContext: itemContext,
     };
-
-    let Renderer = null;
 
     const isContainerAutoLayout = control.Variant === 'AutoLayout';
 
-    const childrenNodes = control._Children?.map((child: any, index: number) => {
-        return (
-            <ControlMapper
-                key={child.ControlName || index}
-                control={child}
-                highlightedControls={highlightedControls}
-                isParentAutoLayout={isContainerAutoLayout}
-                parentProps={evaluatedControl}
-                appId={appId}
-                appImages={appImages}
-                onImageUploaded={onImageUploaded}
-                selectedControlName={selectedControlName}
-                onSelectControl={onSelectControl}
-                onContextMenu={onContextMenu}
-            />
-        );
-    });
+    const childrenNodes = control._Children?.map((child: any, index: number) => (
+        <ControlMapper
+            key={child.ControlName || index}
+            control={child}
+            highlightedControls={highlightedControls}
+            isParentAutoLayout={isContainerAutoLayout}
+            parentProps={evaluatedControl}
+            appId={appId}
+            appImages={appImages}
+            onImageUploaded={onImageUploaded}
+            selectedControlName={selectedControlName}
+            onSelectControl={onSelectControl}
+            onContextMenu={onContextMenu}
+            itemContext={itemContext}
+        />
+    ));
+
+    let Renderer: React.ReactNode = null;
 
     switch (type) {
         case 'label':
@@ -158,51 +169,51 @@ const ControlMapper: React.FC<ControlMapperProps> = ({
         case 'icon':
             Renderer = <IconRenderer props={extendedProps} />;
             break;
+        case 'toggle':
+            Renderer = <ToggleRenderer props={extendedProps} />;
+            break;
         case 'image':
-            Renderer = <ImageRenderer
-                props={extendedProps}
-                appId={appId}
-                appImages={appImages}
-                onUploadSuccess={onImageUploaded}
-            />;
+            Renderer = <ImageRenderer props={extendedProps} appId={appId} appImages={appImages} onUploadSuccess={onImageUploaded} />;
             break;
         case 'gallery': {
-            const items = Array.isArray(evaluatedControl.Items) ? evaluatedControl.Items : [{}];
-            const templateHeight = evaluatedControl.TemplateSize || 100;
-
+            const items: any[] = Array.isArray(evaluatedControl.Items) ? evaluatedControl.Items : [];
+            const tmpl = Number(evaluatedControl.TemplateSize) || 100;
+            const horizontal = control.Variant === 'Horizontal';
             Renderer = (
-                <GalleryRenderer props={extendedProps}>
-                    {items.map((item: any, i: number) => (
-                        <div
-                            key={i}
-                            style={{
-                                position: 'relative',
-                                height: templateHeight,
-                                width: '100%',
-                                borderBottom: '1px solid rgba(255,255,255,0.05)'
-                            }}
-                        >
-                            {control._Children?.map((child: any, j: number) => {
-                                return (
-                                    <ControlMapper
-                                        key={child.ControlName || j}
-                                        control={child}
-                                        highlightedControls={highlightedControls}
-                                        isParentAutoLayout={false}
-                                        parentProps={evaluatedControl}
-                                        itemContext={item}
-                                        appId={appId}
-                                        appImages={appImages}
-                                        onImageUploaded={onImageUploaded}
-                                        selectedControlName={selectedControlName}
-                                        onSelectControl={onSelectControl}
-                                        onContextMenu={onContextMenu}
-                                    />
-                                );
-                            })}
+                <div style={{
+                    width: '100%', height: '100%',
+                    display: 'flex',
+                    flexDirection: horizontal ? 'row' : 'column',
+                    overflowX: horizontal ? 'auto' : 'hidden',
+                    overflowY: horizontal ? 'hidden' : 'auto',
+                    backgroundColor: evaluatedControl.Fill || 'transparent',
+                }}>
+                    {items.map((item, i) => (
+                        <div key={i} style={{
+                            position: 'relative',
+                            flex: '0 0 auto',
+                            width: horizontal ? tmpl : '100%',
+                            height: horizontal ? '100%' : tmpl,
+                        }}>
+                            {control._Children?.map((child: any, j: number) => (
+                                <ControlMapper
+                                    key={child.ControlName || j}
+                                    control={child}
+                                    highlightedControls={highlightedControls}
+                                    isParentAutoLayout={false}
+                                    parentProps={evaluatedControl}
+                                    itemContext={item}
+                                    appId={appId}
+                                    appImages={appImages}
+                                    onImageUploaded={onImageUploaded}
+                                    selectedControlName={selectedControlName}
+                                    onSelectControl={onSelectControl}
+                                    onContextMenu={onContextMenu}
+                                />
+                            ))}
                         </div>
                     ))}
-                </GalleryRenderer>
+                </div>
             );
             break;
         }
@@ -238,21 +249,15 @@ const ControlMapper: React.FC<ControlMapperProps> = ({
             break;
         case 'canvascomponent':
             Renderer = (
-                <div style={{
-                    width: '100%',
-                    height: '100%',
-                    backgroundColor: extendedProps.Fill || 'transparent',
-                    position: 'relative',
-                    overflow: 'hidden'
-                }}>
+                <div style={{ width: '100%', height: '100%', backgroundColor: extendedProps.Fill || 'transparent', position: 'relative', overflow: 'hidden' }}>
                     {childrenNodes}
                 </div>
             );
             break;
         default:
             Renderer = (
-                <div style={{ border: '1px dashed #ccc', width: '100%', height: '100%', fontSize: '10px' }}>
-                    Unknown: {type}
+                <div style={{ border: '1px dashed #ccc', width: '100%', height: '100%', fontSize: '10px', color: '#999', overflow: 'hidden' }}>
+                    {control._ControlType || type}
                     {childrenNodes}
                 </div>
             );

@@ -731,7 +731,6 @@ const App: React.FC = () => {
     <PowerFxProvider
       onNavigate={handleNavigate}
       onNotify={notify}
-      mockData={mockData}
       currentUser={user ? {
         emailAddress: user.primaryEmailAddress?.emailAddress,
         fullName: user.fullName || undefined,

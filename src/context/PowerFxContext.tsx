@@ -1,14 +1,12 @@
-import React, { createContext, useContext, useState, type ReactNode } from 'react';
-import { executePowerFxAction, evaluateExpression, type PowerFxContextState } from '../utils/interpreter';
+import React, { createContext, useContext, useRef, useState, useCallback, type ReactNode } from 'react';
+import { Evaluator, createStore, parseFormula, type Store, type Host } from '../utils/powerfx';
 
 interface PowerFxContextValue {
-    variables: PowerFxContextState;
-    dataSources: Record<string, any[]>;
-    setDataSources: (dataSources: Record<string, any[]>) => void;
-    execute: (action: string) => void;
     evaluate: (expression: string, self?: any, parent?: any, itemContext?: any) => any;
-    registerControl: (name: string, props: any) => void;
-    reset: () => void;
+    execute: (action: string, itemContext?: any, selfObj?: any) => void;
+    registerControl: (name: string, props: any, onSelect?: string) => void;
+    store: Store;
+    version: number;
 }
 
 const PowerFxContext = createContext<PowerFxContextValue | undefined>(undefined);
@@ -17,7 +15,7 @@ interface PowerFxProviderProps {
     children: ReactNode;
     onNavigate?: (screenName?: string) => void;
     onNotify?: (message: string) => void;
-    mockData?: string;
+    onStart?: string | null;
     currentUser?: {
         emailAddress?: string;
         fullName?: string;
@@ -25,100 +23,63 @@ interface PowerFxProviderProps {
     } | null;
 }
 
-export const PowerFxProvider: React.FC<PowerFxProviderProps> = ({ children, onNavigate, onNotify, mockData, currentUser }) => {
-    const [variables, setVariables] = useState<PowerFxContextState>({});
-    const [controls, setControls] = useState<Record<string, any>>({});
-    const [dataSources, setDataSources] = useState<Record<string, any[]>>({});
+export const PowerFxProvider: React.FC<PowerFxProviderProps> = ({ children, onNavigate, onNotify, onStart, currentUser }) => {
+    const storeRef = useRef<Store>(createStore());
+    const [version, setTick] = useState(0);
+    const startedRef = useRef<string | null>(null);
 
-    // Sync mockData from props to dataSources state
-    React.useEffect(() => {
-        if (!mockData) return;
-        try {
-            const parsed = JSON.parse(mockData);
-            // console.log("[DEBUG] PowerFxContext: Mock data sync, keys:", Object.keys(parsed));
-            setDataSources(parsed);
-        } catch (e) {
-            console.warn("Invalid JSON in Mock Data:", e);
-        }
-    }, [mockData]);
+    const user = currentUser
+        ? { Email: currentUser.emailAddress || '', FullName: currentUser.fullName || '', Image: currentUser.imageUrl || '' }
+        : { Email: 'mock@example.com', FullName: 'Mock User', Image: '' };
 
-    const allVariables = React.useMemo(() => {
-        const result = { ...variables };
-        result.User = currentUser ? {
-            Email: currentUser.emailAddress || "",
-            FullName: currentUser.fullName || "",
-            Image: currentUser.imageUrl || ""
-        } : {
-            Email: "mock@example.com",
-            FullName: "Mock User",
-            Image: ""
-        };
-        return result;
-    }, [variables, currentUser]);
+    const host: Host = {
+        navigate: onNavigate,
+        notify: onNotify,
+        selectControl: (name: string) => {
+            const formula = storeRef.current.onSelects[name];
+            if (formula) {
+                const ev = new Evaluator(storeRef.current, host, { User: user });
+                try { ev.eval(parseFormula(formula)); } catch (e) { console.warn('Select() failed for', name, e); }
+            }
+        },
+    };
 
-    const execute = React.useCallback((action: string) => {
-        setVariables(prev => {
-            const evaluationContext = {
-                ...allVariables, // Current variables + User
-                ...controls,
-                ...dataSources
-            };
-            // console.log("[DEBUG] PowerFxContext: execute context keys:", Object.keys(evaluationContext));
-            return executePowerFxAction(action, prev, evaluationContext, onNavigate, onNotify);
-        });
-    }, [onNavigate, onNotify, allVariables, controls, dataSources]);
+    // Run App.OnStart once, synchronously during render, BEFORE children evaluate,
+    // so collections/variables exist on first paint.
+    if (onStart && startedRef.current !== onStart) {
+        startedRef.current = onStart;
+        const ev = new Evaluator(storeRef.current, host, { User: user });
+        try { ev.eval(parseFormula(onStart)); } catch (e) { console.warn('OnStart failed', e); }
+    }
 
-    const evaluate = React.useCallback((expression: string, self?: any, parent?: any, itemContext?: any) => {
-        const fullContext = {
-            ...allVariables,
-            ...controls,
-            ...dataSources,
-            Self: self,
-            Parent: parent,
-            ThisItem: itemContext
-        };
-        return evaluateExpression(expression, fullContext);
-    }, [allVariables, controls, dataSources]);
+    const evaluate = useCallback((expression: string, self?: any, parent?: any, itemContext?: any) => {
+        if (typeof expression !== 'string') return expression;
+        const ev = new Evaluator(storeRef.current, host, { Self: self, Parent: parent, ThisItem: itemContext, User: user });
+        try { return ev.eval(parseFormula(expression)); }
+        catch (e) { return expression.startsWith('=') ? expression.slice(1) : expression; }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user.FullName]);
 
-    const registerControl = React.useCallback((name: string, props: any) => {
-        setControls(prev => {
-            // Check if props are actually different to prevent unnecessary re-renders
-            if (JSON.stringify(prev[name]) === JSON.stringify(props)) return prev;
-            return {
-                ...prev,
-                [name]: props
-            };
-        });
+    const execute = useCallback((action: string, itemContext?: any, selfObj?: any) => {
+        if (!action) return;
+        const ev = new Evaluator(storeRef.current, host, { Self: selfObj, ThisItem: itemContext, User: user });
+        try { ev.eval(parseFormula(action)); } catch (e) { console.warn('Action failed', e); }
+        setTick(t => t + 1);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user.FullName]);
+
+    const registerControl = useCallback((name: string, props: any, onSelect?: string) => {
+        storeRef.current.controls[name] = props;
+        if (onSelect) storeRef.current.onSelects[name] = onSelect;
     }, []);
 
-    const reset = React.useCallback(() => {
-        setVariables({});
-        setControls({});
-        setDataSources({});
-    }, []);
+    const value: PowerFxContextValue = { evaluate, execute, registerControl, store: storeRef.current, version };
 
-    const value = React.useMemo(() => ({
-        variables: allVariables,
-        controls,
-        dataSources,
-        setDataSources,
-        execute,
-        evaluate,
-        registerControl,
-        reset
-    }), [allVariables, controls, dataSources, execute, evaluate, registerControl, reset]);
-
-    return (
-        <PowerFxContext.Provider value={value}>
-            {children}
-        </PowerFxContext.Provider>
-    );
+    return <PowerFxContext.Provider value={value}>{children}</PowerFxContext.Provider>;
 };
 
 export const usePowerFx = () => {
     const context = useContext(PowerFxContext);
-    if (!context) {
-        throw new Error("usePowerFx must be used within a PowerFxProvider");
-    }
+    if (!context) throw new Error('usePowerFx must be used within a PowerFxProvider');
     return context;
 };
