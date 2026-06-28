@@ -66,6 +66,13 @@ The `PowerFxProvider` in `src/context/PowerFxContext.tsx` handles the applicatio
 
 ---
 
+## 🔌 Fake Connections & Data Sources
+The renderer runs data-driven apps **locally with no backend** via `src/utils/connections.ts`.
+- **Data sources** (SharePoint/SQL/Dataverse/Excel-style tables) are seeded from a JSON config (`src/default-connections.json`, or a `connections.json` dropped next to an app, or the 🔌 panel in `Preview.tsx`). They register into `Store.dataSources` and behave like real tables for `Filter/LookUp/Sort/Search/Patch/Collect/Remove` — including minting `ID`/GUID on insert.
+- **Connectors** register into `Store.connectors` as namespace objects so `Office365Users.MyProfile()` etc. resolve. `Office365Users` and `Office365Outlook` are built in; others come from `connectorResponses` (canned results). Side-effecting calls are logged to `Store.outbox`.
+- The Power Fx engine (`utils/powerfx.ts`) was extended: parser supports `Namespace.Operation(args)` (`mcall` node); `resolve()` surfaces a data source as its rows; mutation funcs route through `targetTable()`.
+- Full design + the connector model mined from the portal: `aidocs/local-first-renderer.md`. Runnable example: `examples/connected-app/`.
+
 ## 💾 Persistence & Backend
 - **Supabase**: Used for storing user workspaces, apps, screens, and uploaded images. Logic is located in `src/lib/database.ts`.
 - **Clerk**: Handles user authentication. Profile info is integrated into the PowerFx context (e.g., `User().Email`).

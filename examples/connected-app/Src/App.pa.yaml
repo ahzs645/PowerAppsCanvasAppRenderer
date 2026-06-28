@@ -1,0 +1,6 @@
+App:
+  Properties:
+    StartScreen: =HomeScreen
+    # OnStart can seed local collections too; data sources come from connections.json.
+    OnStart: |-
+      =Set(gblGreeting, "Tasks due")

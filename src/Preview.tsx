@@ -5,9 +5,14 @@ import { InspectContext } from './context/InspectContext';
 import ControlMapper from './components/ControlMapper';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { parsePowerYAML, extractOnStart, loadAppFromFiles, type LoadedApp } from './utils/parser';
+import { parseConnectionsConfig, type ConnectionsConfig } from './utils/connections';
 import defaultYaml from './default.yaml?raw';
+import defaultConnections from './default-connections.json';
 
 interface AppState extends LoadedApp { title: string; }
+
+const CONN_RE = /(^|\/)connections\.json$/i; // a fake-connections config dropped with the app
+const DEFAULT_CONN_TEXT = JSON.stringify(defaultConnections, null, 2);
 
 interface Size { w: number; h: number; }
 const SIZE_PRESETS: { label: string; w: number; h: number }[] = [
@@ -29,7 +34,7 @@ const inputStyle: React.CSSProperties = { background: '#1c2030', color: '#e8eaed
 
 const PA_RE = /\.pa\.yaml$/i;
 
-// Recursively collect *.pa.yaml files from a drag-drop DataTransfer (folder or files).
+// Recursively collect *.pa.yaml + connections.json files from a drag-drop DataTransfer.
 async function filesFromDataTransfer(dt: DataTransfer): Promise<{ name: string; text: string }[]> {
     const out: File[] = [];
     const roots = Array.from(dt.items || [])
@@ -52,7 +57,7 @@ async function filesFromDataTransfer(dt: DataTransfer): Promise<{ name: string; 
     if (roots.length) { const nested = await Promise.all(roots.map(readEntry)); out.push(...nested.flat()); }
     else out.push(...Array.from(dt.files || []));
 
-    const wanted = out.filter(f => PA_RE.test(f.name) && !f.name.startsWith('_'));
+    const wanted = out.filter(f => (PA_RE.test(f.name) || CONN_RE.test(f.name)) && !f.name.startsWith('_'));
     return Promise.all(wanted.map(async f => ({ name: f.name, text: await f.text() })));
 }
 
@@ -72,6 +77,15 @@ const Preview: React.FC = () => {
     const [loadError, setLoadError] = React.useState<string | null>(null);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+    // Fake connections / data sources (editable JSON; bundled default to start).
+    const [connText, setConnText] = React.useState<string>(DEFAULT_CONN_TEXT);
+    const [showConn, setShowConn] = React.useState(false);
+    const connConfig = React.useMemo<ConnectionsConfig | null>(() => parseConnectionsConfig(connText), [connText]);
+    const connStats = React.useMemo(() => ({
+        ds: connConfig?.dataSources ? Object.keys(connConfig.dataSources).length : 0,
+        cn: connConfig?.connectorResponses ? Object.keys(connConfig.connectorResponses).length : 0,
+    }), [connConfig]);
+
     const [size, setSize] = React.useState<Size>({ w: 1366, h: 768 });
     const [zoom, setZoom] = React.useState<'fit' | number>('fit');
     const [avail, setAvail] = React.useState({ w: 1200, h: 700 });
@@ -88,8 +102,12 @@ const Preview: React.FC = () => {
     const presetMatch = SIZE_PRESETS.find(p => p.w === size.w && p.h === size.h);
 
     const loadFiles = React.useCallback((files: { name: string; text: string }[], title: string) => {
-        if (!files.length) { setLoadError('No .pa.yaml files found in that folder.'); return; }
-        const loaded = loadAppFromFiles(files);
+        // A connections.json dropped alongside the app becomes the active fake-connections config.
+        const connFile = files.find(f => CONN_RE.test(f.name));
+        if (connFile) setConnText(connFile.text);
+        const paFiles = files.filter(f => PA_RE.test(f.name));
+        if (!paFiles.length) { setLoadError('No .pa.yaml files found in that folder.'); return; }
+        const loaded = loadAppFromFiles(paFiles);
         if (!loaded.names.length) { setLoadError('No screens found in those .pa.yaml files.'); return; }
         setLoadError(null);
         setApp({ ...loaded, title });
@@ -109,7 +127,7 @@ const Preview: React.FC = () => {
 
     const onPick = React.useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const list = Array.from(e.target.files || []);
-        const wanted = list.filter(f => PA_RE.test(f.name) && !f.name.startsWith('_'));
+        const wanted = list.filter(f => (PA_RE.test(f.name) || CONN_RE.test(f.name)) && !f.name.startsWith('_'));
         const files = await Promise.all(wanted.map(async f => ({ name: f.name, text: await f.text() })));
         const root = (list[0] as any)?.webkitRelativePath?.split('/')[0];
         loadFiles(files, root || 'selected folder');
@@ -164,6 +182,11 @@ const Preview: React.FC = () => {
                             {ZOOM_OPTIONS.map(z => <option key={z.label} value={String(z.value)}>{z.label}{z.value === 'fit' ? ` (${Math.round(scale * 100)}%)` : ''}</option>)}
                         </select>
                         <button
+                            onClick={() => setShowConn(s => !s)}
+                            title="Edit fake connections & data sources"
+                            style={{ background: showConn ? '#0f766e' : '#1c2030', color: '#cbd0d8', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}
+                        >🔌 {connStats.ds} source{connStats.ds === 1 ? '' : 's'}</button>
+                        <button
                             onClick={() => fileInputRef.current?.click()}
                             style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 12, cursor: 'pointer' }}
                         >Open app folder…</button>
@@ -195,7 +218,7 @@ const Preview: React.FC = () => {
                                 background: '#fff', boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
                                 transform: `scale(${scale})`, transformOrigin: 'top left',
                             }}>
-                                <PowerFxProvider key={appKey} onNavigate={s => { if (s && app.screens?.[s]) setActiveScreen(s); }} onNotify={m => console.log('[Notify]', m)} onStart={app.onStart}>
+                                <PowerFxProvider key={appKey} onNavigate={s => { if (s && app.screens?.[s]) setActiveScreen(s); }} onNotify={m => console.log('[Notify]', m)} onStart={app.onStart} connections={connConfig}>
                                     <ErrorBoundary resetKey={`${appKey}:${activeScreen}`}>
                                         {active && (
                                             <ControlMapper
@@ -219,9 +242,77 @@ const Preview: React.FC = () => {
                             Drop a Canvas App folder (with <code style={{ margin: '0 6px' }}>*.pa.yaml</code> files) to render it
                         </div>
                     )}
+
+                    {showConn && (
+                        <ConnectionsPanel
+                            text={connText}
+                            valid={connConfig != null}
+                            stats={connStats}
+                            onClose={() => setShowConn(false)}
+                            onApply={t => { setConnText(t); setAppKey(k => k + 1); }}
+                            onReset={() => { setConnText(DEFAULT_CONN_TEXT); setAppKey(k => k + 1); }}
+                        />
+                    )}
                 </div>
             </div>
         </FluentProvider>
+    );
+};
+
+/**
+ * Live editor for the fake-connections JSON. Lets you define data sources
+ * (SharePoint/SQL/Dataverse-style tables) and canned connector responses, then
+ * re-run the app against them without touching a backend.
+ */
+const ConnectionsPanel: React.FC<{
+    text: string;
+    valid: boolean;
+    stats: { ds: number; cn: number };
+    onClose: () => void;
+    onApply: (text: string) => void;
+    onReset: () => void;
+}> = ({ text, valid, stats, onClose, onApply, onReset }) => {
+    const [draft, setDraft] = React.useState(text);
+    React.useEffect(() => { setDraft(text); }, [text]);
+    let draftError: string | null = null;
+    try { if (draft.trim()) JSON.parse(draft); } catch (e: any) { draftError = e.message; }
+    return (
+        <div style={{
+            position: 'absolute', top: 16, right: 16, bottom: 16, width: 420, zIndex: 20,
+            background: '#11141c', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10,
+            boxShadow: '0 12px 48px rgba(0,0,0,0.55)', display: 'flex', flexDirection: 'column', color: '#e8eaed',
+        }}>
+            <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <strong style={{ fontSize: 13 }}>Fake connections</strong>
+                <span style={{ fontSize: 11, color: '#9aa0ab' }}>{stats.ds} data source{stats.ds === 1 ? '' : 's'} · {stats.cn} connector override{stats.cn === 1 ? '' : 's'} {valid ? '· active' : '· invalid'}</span>
+                <button onClick={onClose} style={{ marginLeft: 'auto', background: 'transparent', color: '#9aa0ab', border: 'none', fontSize: 16, cursor: 'pointer' }}>×</button>
+            </div>
+            <div style={{ padding: '8px 12px', fontSize: 11, color: '#9aa0ab', lineHeight: 1.5 }}>
+                <code>dataSources</code> act like SharePoint/SQL/Dataverse tables (Filter/LookUp/Patch/Collect work).
+                <code> connectorResponses</code> are canned results. <code>Office365Users</code> &amp; <code>Office365Outlook</code> are built in.
+            </div>
+            <textarea
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                spellCheck={false}
+                style={{
+                    flex: 1, margin: '0 12px', background: '#0b0e14', color: '#cbd0d8', border: '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11, padding: 8, resize: 'none',
+                }}
+            />
+            {draftError && <div style={{ color: '#fca5a5', fontSize: 11, padding: '6px 12px' }}>Invalid JSON: {draftError}</div>}
+            <div style={{ padding: 12, display: 'flex', gap: 8 }}>
+                <button
+                    onClick={() => onApply(draft)}
+                    disabled={!!draftError}
+                    style={{ background: draftError ? '#374151' : '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: draftError ? 'not-allowed' : 'pointer' }}
+                >Apply &amp; run</button>
+                <button
+                    onClick={onReset}
+                    style={{ background: '#1c2030', color: '#cbd0d8', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer' }}
+                >Reset to sample</button>
+            </div>
+        </div>
     );
 };
 
