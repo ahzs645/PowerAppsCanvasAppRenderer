@@ -1,0 +1,66 @@
+HomeScreen:
+  Properties:
+    Fill: =RGBA(245, 246, 248, 1)
+  Children:
+    - Header:
+        Control: ModernText
+        Properties:
+          Text: ="Welcome, " & Office365Users.MyProfile().DisplayName
+          X: =24
+          Y: =16
+          Width: =800
+          Height: =40
+          Size: =22
+          FontWeight: =FontWeight.Semibold
+    - SubHeader:
+        Control: ModernText
+        Properties:
+          Text: |-
+            =gblGreeting & ": " & CountRows(Filter(Tasks, Done = false)) & " open"
+          X: =24
+          Y: =56
+          Width: =800
+          Height: =24
+          Size: =13
+          Color: =RGBA(110, 110, 110, 1)
+    - TasksGallery:
+        Control: Gallery
+        Variant: Vertical
+        Properties:
+          Items: =SortByColumns(Filter(Tasks, Done = false), "DueDate")
+          X: =24
+          Y: =96
+          Width: =520
+          Height: =440
+          TemplateSize: =72
+          Fill: =RGBA(255, 255, 255, 1)
+        Children:
+          - TitleLabel:
+              Control: ModernText
+              Properties:
+                Text: =ThisItem.Title
+                X: =12
+                Y: =10
+                Width: =480
+                Height: =26
+                Size: =15
+          - MetaLabel:
+              Control: ModernText
+              Properties:
+                Text: =ThisItem.Assignee & "  ·  " & ThisItem.Status & "  ·  due " & Text(ThisItem.DueDate, "mmm dd")
+                X: =12
+                Y: =38
+                Width: =480
+                Height: =20
+                Size: =11
+                Color: =RGBA(120, 120, 120, 1)
+    - AddButton:
+        Control: Button
+        Properties:
+          Text: ="Add sample task"
+          X: =24
+          Y: =548
+          Width: =200
+          Height: =40
+          OnSelect: |-
+            =Patch(Tasks, Defaults(Tasks), { Title: "New task " & (CountRows(Tasks) + 1), Assignee: Office365Users.MyProfile().DisplayName, Status: "Not started", Done: false })

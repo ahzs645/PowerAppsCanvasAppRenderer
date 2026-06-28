@@ -118,6 +118,7 @@ type Node =
   | { k: 'enumref'; path: string } // dotted enum path built lazily; not used directly
   | { k: 'member'; obj: Node; name: string }
   | { k: 'call'; name: string; args: Node[]; rawArgs: { node: Node; alias?: string }[] }
+  | { k: 'mcall'; obj: Node; name: string; args: Node[]; rawArgs: { node: Node; alias?: string }[] } // connector method call: Office365Users.MyProfile(...)
   | { k: 'record'; fields: { key: string; value: Node }[] }
   | { k: 'unary'; op: string; e: Node }
   | { k: 'binary'; op: string; l: Node; r: Node }
@@ -200,7 +201,15 @@ class Parser {
         let name: string;
         if (t.type === 'id' || t.type === 'qid') { name = t.value; this.next(); }
         else break;
-        e = { k: 'member', obj: e, name };
+        // method call form: Namespace.Operation(args)  (e.g. Office365Users.MyProfile())
+        if (this.isOp('(')) {
+          this.next();
+          const rawArgs = this.parseArgs();
+          this.eatOp(')');
+          e = { k: 'mcall', obj: e, name, args: rawArgs.map(a => a.node), rawArgs };
+        } else {
+          e = { k: 'member', obj: e, name };
+        }
       } else break;
     }
     return e;
@@ -279,10 +288,46 @@ export function parseFormula(src: string): Node {
 // Runtime
 // ----------------------------------------------------------------------------
 
+/**
+ * A fake/local stand-in for a tabular connector data source (SharePoint list,
+ * SQL table, Dataverse table, Excel table…). Behaves like an in-memory Table
+ * for Filter/LookUp/Sort/Patch/Collect/Remove so apps that bind to real data
+ * run locally with no backend. Mirrors the connector model mined from the
+ * Power Apps portal: a data source is bound to a connector + dataset + table
+ * and carries seeded rows plus a primary key for Patch/Collect identity.
+ */
+export interface DataSource {
+  name: string;                 // the Power Fx identifier, e.g. "Tasks" or 'My List'
+  rows: any[];                  // seeded records (the live, mutable table)
+  primaryKey: string;           // "ID" (SharePoint/SQL) or "<entity>id" (Dataverse)
+  idKind?: 'int' | 'guid';      // how to mint new keys on insert
+  connector?: string;           // e.g. "shared_sharepointonline"
+  datasetName?: string;         // SharePoint site URL / SQL server,db
+  tableName?: string;           // list GUID / table name
+  schema?: Record<string, string>; // column -> Power Fx type name (advisory)
+}
+
+/** A single connector operation handler (e.g. Office365Users.MyProfile). */
+export type ConnectorOp = (args: any[], ev: Evaluator) => any;
+
+/**
+ * A fake connector exposed as a Power Fx namespace object so that
+ * `Office365Users.MyProfile()` / `Office365Outlook.SendEmailV2(...)` resolve
+ * locally. Operations are keyed by lower-cased operationId.
+ */
+export interface Connector {
+  name: string;                 // "shared_office365users"
+  namespace: string;            // "Office365Users" (the Power Fx identifier)
+  ops: Record<string, ConnectorOp>;
+}
+
 export interface Store {
   vars: Record<string, any>;       // Set variables + collections (arrays)
   controls: Record<string, any>;   // registered control evaluated props
   onSelects: Record<string, string>; // control name -> raw OnSelect formula
+  dataSources: Record<string, DataSource>; // fake tabular connections, keyed by name
+  connectors: Record<string, Connector>;   // fake connectors, keyed by lower-cased namespace
+  outbox: any[];                   // log of side-effecting connector calls (SendEmail, Notify, …)
 }
 
 export interface Host {
@@ -293,7 +338,7 @@ export interface Host {
 }
 
 export function createStore(): Store {
-  return { vars: {}, controls: {}, onSelects: {} };
+  return { vars: {}, controls: {}, onSelects: {}, dataSources: {}, connectors: {}, outbox: [] };
 }
 
 interface Frame { fields?: Record<string, any>; binds?: Record<string, any>; }
@@ -366,7 +411,24 @@ export class Evaluator {
     if (Object.prototype.hasOwnProperty.call(this.root, name)) return this.root[name];
     if (Object.prototype.hasOwnProperty.call(this.store.vars, name)) return this.store.vars[name];
     if (Object.prototype.hasOwnProperty.call(this.store.controls, name)) return this.store.controls[name];
+    // A bound data source resolves to its (live) rows so Filter/LookUp/etc. work.
+    if (Object.prototype.hasOwnProperty.call(this.store.dataSources, name)) return this.store.dataSources[name].rows;
     return UNDEFINED;
+  }
+
+  /**
+   * Resolves a name to a mutable table for behavior functions (Collect/Patch/…):
+   * a bound data source's rows, or an in-memory collection (created on demand).
+   */
+  targetTable(node: Node): { arr: any[]; ds?: DataSource } {
+    const name = node.k === 'id' ? node.v : null;
+    if (name != null) {
+      if (this.store.dataSources[name]) { const ds = this.store.dataSources[name]; return { arr: ds.rows, ds }; }
+      if (!isTable(this.store.vars[name])) this.store.vars[name] = [];
+      return { arr: this.store.vars[name] };
+    }
+    const v = this.eval(node);
+    return { arr: isTable(v) ? v : [] };
   }
 
   evalSrc(src: string): any {
@@ -398,6 +460,30 @@ export class Evaluator {
       case 'binary': return this.evalBinary(node);
       case 'seq': { let last: any = null; for (const it of node.items) last = this.eval(it); return last; }
       case 'call': return this.evalCall(node);
+      case 'mcall': return this.evalMethodCall(node);
+    }
+    return null;
+  }
+
+  /**
+   * Evaluates a connector method call like `Office365Users.MyProfile()` or
+   * `Office365Outlook.SendEmailV2({To:...})` against the fake connector registry.
+   * Falls back to the dotted enum string (old behavior) when the namespace is
+   * not a registered connector, so existing enum-ish references don't regress.
+   */
+  evalMethodCall(node: Node & { k: 'mcall' }): any {
+    const nsPath = this.enumPath(node.obj); // e.g. "Office365Users"
+    const conn = nsPath ? this.store.connectors[nsPath.toLowerCase()] : undefined;
+    if (conn) {
+      const op = conn.ops[node.name.toLowerCase()];
+      const args = node.args.map(a => this.eval(a));
+      if (op) { try { return op(args, this); } catch { return null; } }
+      return null; // unknown operation on a known connector -> Blank
+    }
+    // Not a connector: maybe a record field that happens to be callable.
+    const obj = this.evalMaybe(node.obj);
+    if (isRecord(obj) && typeof obj[node.name] === 'function') {
+      return (obj[node.name] as any)(...node.args.map(a => this.eval(a)));
     }
     return null;
   }
@@ -426,6 +512,12 @@ export class Evaluator {
     if (node.k === 'id') return node.v;
     if (node.k === 'member') { const base = this.enumPath(node.obj); return base ? base + '.' + node.name : null; }
     return null;
+  }
+
+  /** True for a sort-order arg written as `Descending` or `SortOrder.Descending`. */
+  isDescending(node: Node): boolean {
+    const s = node.k === 'id' ? node.v : (node.k === 'member' ? (this.enumPath(node) || '') : stringify(this.eval(node)));
+    return String(s).toLowerCase().includes('descending');
   }
 
   evalMember(node: Node & { k: 'member' }): any {
@@ -537,12 +629,11 @@ export class Evaluator {
         const src = toTable(this.eval(raw[0].node)).slice();
         const alias = raw[0].alias;
         const keyExpr = raw[1];
-        let desc = false;
-        if (raw[2]) { const o = this.eval(raw[2].node); desc = stringify(o).toLowerCase().includes('descending'); }
+        const desc = raw[2] ? this.isDescending(raw[2].node) : false;
         src.sort((x, y) => {
           const kx = this.withRow(x, alias, () => this.eval(keyExpr.node));
           const ky = this.withRow(y, alias, () => this.eval(keyExpr.node));
-          let c = cmp(kx, ky);
+          const c = cmp(kx, ky);
           return desc ? -c : c;
         });
         return src;
@@ -550,10 +641,17 @@ export class Evaluator {
       case 'sortbycolumns': {
         const src = toTable(this.eval(raw[0].node)).slice();
         const col = stringify(this.eval(raw[1].node));
-        let desc = false;
-        if (raw[2]) desc = stringify(this.eval(raw[2].node)).toLowerCase().includes('descending');
+        const desc = raw[2] ? this.isDescending(raw[2].node) : false;
         src.sort((x, y) => { const c = cmp(x?.[col], y?.[col]); return desc ? -c : c; });
         return src;
+      }
+      case 'defaults': {
+        // Defaults(DS) — a blank record for the data source (canonical with Patch insert).
+        const node0 = raw[0].node;
+        const ds = node0.k === 'id' ? this.store.dataSources[node0.v] : undefined;
+        const rec: any = {};
+        if (ds?.schema) for (const [col, ty] of Object.entries(ds.schema)) { if (col === ds.primaryKey) continue; rec[col] = defaultForType(ty); }
+        return rec;
       }
       case 'forall': {
         const src = toTable(this.eval(raw[0].node));
@@ -587,6 +685,62 @@ export class Evaluator {
         const sep = raw[2] ? stringify(this.eval(raw[2].node)) : '';
         return src.map(row => this.withRow(row, alias, () => stringify(this.eval(raw[1].node)))).join(sep);
       }
+      // ---- table-shaping (column projection over a row scope) --------------
+      case 'addcolumns': {
+        const src = toTable(this.eval(raw[0].node));
+        const alias = raw[0].alias;
+        return src.map(row => this.withRow(row, alias, () => {
+          const out = { ...row };
+          for (let i = 1; i + 1 < raw.length; i += 2) out[stringify(this.eval(raw[i].node))] = this.eval(raw[i + 1].node);
+          return out;
+        }));
+      }
+      case 'dropcolumns': {
+        const src = toTable(this.eval(raw[0].node));
+        const cols = raw.slice(1).map(a => stringify(this.eval(a.node)));
+        return src.map(row => { const o = { ...row }; for (const c of cols) delete o[c]; return o; });
+      }
+      case 'showcolumns': {
+        const src = toTable(this.eval(raw[0].node));
+        const cols = raw.slice(1).map(a => stringify(this.eval(a.node)));
+        return src.map(row => { const o: any = {}; for (const c of cols) o[c] = row?.[c]; return o; });
+      }
+      case 'renamecolumns': {
+        const src = toTable(this.eval(raw[0].node));
+        const pairs: [string, string][] = [];
+        for (let i = 1; i + 1 < raw.length; i += 2) pairs.push([stringify(this.eval(raw[i].node)), stringify(this.eval(raw[i + 1].node))]);
+        return src.map(row => { const o = { ...row }; for (const [oldN, newN] of pairs) if (oldN in o) { o[newN] = o[oldN]; delete o[oldN]; } return o; });
+      }
+      case 'distinct': {
+        const src = toTable(this.eval(raw[0].node));
+        const alias = raw[0].alias;
+        const seen = new Set<string>(); const out: any[] = [];
+        for (const row of src) {
+          const v = this.withRow(row, alias, () => this.eval(raw[1].node));
+          const key = stringify(v);
+          if (!seen.has(key)) { seen.add(key); out.push({ Value: v, Result: v }); }
+        }
+        return out;
+      }
+      case 'search': {
+        const src = toTable(this.eval(raw[0].node));
+        const term = stringify(this.eval(raw[1].node)).toLowerCase();
+        if (!term) return src;
+        const cols = raw.slice(2).map(a => stringify(this.eval(a.node)));
+        return src.filter(row => cols.some(c => stringify(row?.[c]).toLowerCase().includes(term)));
+      }
+      case 'iferror': {
+        // IfError(value, fallback [,value, fallback]... [,default]). We rarely
+        // throw, so treat Blank/NaN as the error signal.
+        const a = node.args;
+        for (let i = 0; i + 1 < a.length; i += 2) {
+          let v: any; try { v = this.eval(a[i]); } catch { v = null; }
+          const isErr = v == null || (typeof v === 'number' && isNaN(v));
+          if (!isErr) return v;
+          if (i + 2 >= a.length) return this.eval(a[i + 1]);
+        }
+        return a.length % 2 === 1 ? this.eval(a[a.length - 1]) : null;
+      }
     }
 
     // ---- behavior (side-effecting) --------------------------------------
@@ -594,57 +748,49 @@ export class Evaluator {
       case 'set': { const target = (raw[0].node as any).v; this.store.vars[target] = this.eval(raw[1].node); return null; }
       case 'updatecontext': { const rec = this.eval(raw[0].node); if (isRecord(rec)) Object.assign(this.store.vars, rec); return null; }
       case 'collect': case 'clearcollect': {
-        const target = (raw[0].node as any).v as string;
-        if (!isTable(this.store.vars[target])) this.store.vars[target] = [];
-        const arr: any[] = this.store.vars[target];
+        const { arr, ds } = this.targetTable(raw[0].node);
         if (name === 'clearcollect') arr.length = 0;
+        let lastPushed: any = null;
         for (let i = 1; i < raw.length; i++) {
           const v = this.eval(raw[i].node);
-          if (isTable(v)) for (const r of v) arr.push(r);
-          else if (v != null) arr.push(v);
+          if (isTable(v)) for (const r of v) { const rec = ds ? mintKey(ds, { ...r }) : r; arr.push(rec); lastPushed = rec; }
+          else if (v != null) { const rec = ds && isRecord(v) ? mintKey(ds, { ...v }) : v; arr.push(rec); lastPushed = rec; }
         }
-        return arr;
+        return ds ? lastPushed ?? arr : arr;
       }
-      case 'clear': { const t = (raw[0].node as any).v; if (isTable(this.store.vars[t])) this.store.vars[t].length = 0; else this.store.vars[t] = []; return null; }
+      case 'clear': { const { arr } = this.targetTable(raw[0].node); arr.length = 0; return null; }
       case 'patch': {
-        const t = (raw[0].node as any).v;
-        const arr: any[] = this.store.vars[t];
+        const { arr, ds } = this.targetTable(raw[0].node);
         const base = this.eval(raw[1].node);
         const changes = this.eval(raw[2].node);
-        if (isTable(arr) && isRecord(base)) {
-          let row = arr.find(r => r === base) || arr.find(r => recordMatch(r, base));
+        if (isRecord(base)) {
+          const row = arr.find(r => r === base) || arr.find(r => recordMatch(r, base, ds?.primaryKey));
           if (row) { Object.assign(row, changes); return row; }
-          const nr = { ...base, ...changes }; arr.push(nr); return nr;
+          const nr = mintKey(ds, { ...base, ...(isRecord(changes) ? changes : {}) }); arr.push(nr); return nr;
         }
         return base;
       }
       case 'updateif': {
-        const t = (raw[0].node as any).v;
-        const arr: any[] = this.store.vars[t];
-        if (isTable(arr)) {
-          for (const row of arr) {
-            const match = this.withRow(row, undefined, () => truthy(this.eval(raw[1].node)));
-            if (match) { const ch = this.withRow(row, undefined, () => this.eval(raw[2].node)); if (isRecord(ch)) Object.assign(row, ch); }
-          }
+        const { arr } = this.targetTable(raw[0].node);
+        for (const row of arr) {
+          const match = this.withRow(row, undefined, () => truthy(this.eval(raw[1].node)));
+          if (match) { const ch = this.withRow(row, undefined, () => this.eval(raw[2].node)); if (isRecord(ch)) Object.assign(row, ch); }
         }
         return null;
       }
       case 'removeif': {
-        const t = (raw[0].node as any).v;
-        const arr: any[] = this.store.vars[t];
-        if (isTable(arr)) {
-          for (let i = arr.length - 1; i >= 0; i--) {
-            const match = this.withRow(arr[i], undefined, () => raw.slice(1).every(p => truthy(this.eval(p.node))));
-            if (match) arr.splice(i, 1);
-          }
+        const { arr } = this.targetTable(raw[0].node);
+        for (let i = arr.length - 1; i >= 0; i--) {
+          const match = this.withRow(arr[i], undefined, () => raw.slice(1).every(p => truthy(this.eval(p.node))));
+          if (match) arr.splice(i, 1);
         }
         return null;
       }
       case 'remove': {
-        const t = (raw[0].node as any).v;
-        const arr: any[] = this.store.vars[t];
+        const { arr, ds } = this.targetTable(raw[0].node);
         const base = this.eval(raw[1].node);
-        if (isTable(arr)) { const idx = arr.findIndex(r => r === base || recordMatch(r, base)); if (idx >= 0) arr.splice(idx, 1); }
+        const idx = arr.findIndex(r => r === base || recordMatch(r, base, ds?.primaryKey));
+        if (idx >= 0) arr.splice(idx, 1);
         return null;
       }
       case 'select': {
@@ -703,6 +849,45 @@ export class Evaluator {
       case 'split': { const s = stringify(args[0] ?? ''); const sep = stringify(args[1] ?? ''); return s.split(sep).map(x => ({ Result: x, Value: x })); }
       case 'user': return this.root.User || { Email: '', FullName: '', Image: '' };
       case 'color': return args[0];
+      // ---- date / time ----------------------------------------------------
+      case 'now': return new Date();
+      case 'today': { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+      case 'date': return new Date(asNum(args[0]), asNum(args[1]) - 1, asNum(args[2]));
+      case 'time': return new Date(1970, 0, 1, asNum(args[0]), asNum(args[1]), asNum(args[2] ?? 0));
+      case 'hour': return args[0] instanceof Date ? args[0].getHours() : 0;
+      case 'minute': return args[0] instanceof Date ? args[0].getMinutes() : 0;
+      case 'second': return args[0] instanceof Date ? args[0].getSeconds() : 0;
+      case 'weekday': return args[0] instanceof Date ? args[0].getDay() + 1 : 0;
+      case 'istoday': { if (!(args[0] instanceof Date)) return false; const n = new Date(); return args[0].toDateString() === n.toDateString(); }
+      case 'dateadd': return dateAdd(args[0], asNum(args[1]), args[2] != null ? stringify(args[2]) : 'Days');
+      case 'datediff': return dateDiff(args[0], args[1], args[2] != null ? stringify(args[2]) : 'Days');
+      // ---- json / data ----------------------------------------------------
+      case 'parsejson': { try { return typeof args[0] === 'string' ? JSON.parse(args[0]) : args[0]; } catch { return null; } }
+      case 'json': { try { return JSON.stringify(args[0]); } catch { return ''; } }
+      case 'datasourceinfo': return null;
+      case 'guid': return args[0] != null && args[0] !== '' ? stringify(args[0]) : genGuid();
+      // ---- string ---------------------------------------------------------
+      case 'replace': { const s = stringify(args[0] ?? ''); const start = asNum(args[1]) - 1; const count = asNum(args[2]); return s.slice(0, start) + stringify(args[3] ?? '') + s.slice(start + count); }
+      case 'find': { const within = stringify(args[1] ?? ''); const start = args[2] != null ? asNum(args[2]) - 1 : 0; const idx = within.indexOf(stringify(args[0] ?? ''), start); return idx < 0 ? null : idx + 1; }
+      case 'proper': return stringify(args[0] ?? '').replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+      case 'trimends': return stringify(args[0] ?? '').replace(/^\s+|\s+$/g, '');
+      case 'char': return String.fromCharCode(asNum(args[0]));
+      case 'unichar': return String.fromCodePoint(asNum(args[0]));
+      case 'plaintext': return stringify(args[0] ?? '').replace(/<[^>]*>/g, '');
+      case 'encodeurl': return encodeURIComponent(stringify(args[0] ?? ''));
+      case 'ismatch': { try { return new RegExp(matchPattern(stringify(args[1] ?? ''))).test(stringify(args[0] ?? '')); } catch { return false; } }
+      case 'isnumeric': return typeof args[0] === 'number' ? !isNaN(args[0]) : (args[0] != null && args[0] !== '' && !isNaN(Number(args[0])));
+      case 'boolean': return truthy(args[0]);
+      // ---- math -----------------------------------------------------------
+      case 'trunc': { const f = Math.pow(10, asNum(args[1] ?? 0)); return Math.trunc(asNum(args[0]) * f) / f; }
+      case 'exp': return Math.exp(asNum(args[0]));
+      case 'ln': return Math.log(asNum(args[0]));
+      case 'log': return args[1] != null ? Math.log(asNum(args[0])) / Math.log(asNum(args[1])) : Math.log10(asNum(args[0]));
+      case 'pi': return Math.PI;
+      case 'rand': return Math.random();
+      case 'randbetween': { const lo = asNum(args[0]), hi = asNum(args[1]); return Math.floor(Math.random() * (hi - lo + 1)) + lo; }
+      case 'sequence': { const n = asNum(args[0]); const start = args[1] != null ? asNum(args[1]) : 1; const step = args[2] != null ? asNum(args[2]) : 1; return Array.from({ length: Math.max(0, n) }, (_, i) => ({ Value: start + i * step })); }
+      case 'colorfade': return args[0]; // pass-through (no real fade yet)
       default:
         return null;
     }
@@ -757,13 +942,98 @@ function aggregate(name: string, vals: number[]): number {
   return 0;
 }
 
-function recordMatch(row: any, base: any): boolean {
+function recordMatch(row: any, base: any, primaryKey?: string): boolean {
   if (!isRecord(row) || !isRecord(base)) return false;
-  // match on a primary-key-ish field if present, else all shared keys
-  const keys = ['id', 'ID', 'oid', 'gid', 'colId'];
+  // Prefer the data source's declared primary key when we have one.
+  const keys = primaryKey ? [primaryKey, 'id', 'ID', 'oid', 'gid', 'colId'] : ['id', 'ID', 'oid', 'gid', 'colId'];
   for (const k of keys) {
     if (k in base && k in row) { if (!eq(row[k], base[k])) return false; }
   }
   // require at least identity overlap
   return keys.some(k => k in base && k in row);
+}
+
+/** Blank value for a data-source column type (used by Defaults()). */
+function defaultForType(ty: string): any {
+  switch (String(ty).toLowerCase()) {
+    case 'text': case 'string': case 'hyperlink': case 'email': return '';
+    case 'number': case 'decimal': case 'float': case 'currency': return 0;
+    case 'boolean': case 'yesno': return false;
+    default: return null; // DateTime, GUID, Lookup, Choice, … start Blank
+  }
+}
+
+function genGuid(): string {
+  // RFC4122-ish v4 (good enough for fake Dataverse keys; no crypto dependency)
+  let s = '';
+  for (let i = 0; i < 32; i++) {
+    if (i === 8 || i === 12 || i === 16 || i === 20) s += '-';
+    if (i === 12) { s += '4'; continue; }
+    if (i === 16) { s += ((Math.floor(Math.random() * 4)) + 8).toString(16); continue; }
+    s += Math.floor(Math.random() * 16).toString(16);
+  }
+  return s;
+}
+
+/** Assigns a new primary key to a freshly inserted data-source record (if it has none). */
+function mintKey(ds: DataSource | undefined, rec: any): any {
+  if (!ds || !isRecord(rec)) return rec;
+  const pk = ds.primaryKey;
+  if (rec[pk] != null && rec[pk] !== '') return rec;
+  if (ds.idKind === 'guid') rec[pk] = genGuid();
+  else {
+    const max = ds.rows.reduce((m, r) => { const n = Number(r?.[pk]); return Number.isFinite(n) && n > m ? n : m; }, 0);
+    rec[pk] = max + 1;
+  }
+  return rec;
+}
+
+function toDate(v: any): Date | null {
+  if (v instanceof Date) return v;
+  if (typeof v === 'string' || typeof v === 'number') { const d = new Date(v); return isNaN(d.getTime()) ? null : d; }
+  return null;
+}
+
+const unitNorm = (u: string) => u.replace(/^TimeUnit\./i, '').toLowerCase();
+
+function dateAdd(date: any, n: number, units: string): Date | null {
+  const d = toDate(date); if (!d) return null;
+  const r = new Date(d.getTime());
+  switch (unitNorm(units)) {
+    case 'years': r.setFullYear(r.getFullYear() + n); break;
+    case 'quarters': r.setMonth(r.getMonth() + n * 3); break;
+    case 'months': r.setMonth(r.getMonth() + n); break;
+    case 'days': r.setDate(r.getDate() + n); break;
+    case 'hours': r.setHours(r.getHours() + n); break;
+    case 'minutes': r.setMinutes(r.getMinutes() + n); break;
+    case 'seconds': r.setSeconds(r.getSeconds() + n); break;
+    case 'milliseconds': r.setMilliseconds(r.getMilliseconds() + n); break;
+    default: r.setDate(r.getDate() + n);
+  }
+  return r;
+}
+
+function dateDiff(a: any, b: any, units: string): number {
+  const da = toDate(a), db = toDate(b); if (!da || !db) return 0;
+  const ms = db.getTime() - da.getTime();
+  switch (unitNorm(units)) {
+    case 'years': return db.getFullYear() - da.getFullYear();
+    case 'quarters': return (db.getFullYear() - da.getFullYear()) * 4 + (Math.floor(db.getMonth() / 3) - Math.floor(da.getMonth() / 3));
+    case 'months': return (db.getFullYear() - da.getFullYear()) * 12 + (db.getMonth() - da.getMonth());
+    case 'hours': return Math.floor(ms / 3.6e6);
+    case 'minutes': return Math.floor(ms / 6e4);
+    case 'seconds': return Math.floor(ms / 1e3);
+    case 'milliseconds': return ms;
+    default: return Math.floor(ms / 8.64e7); // days
+  }
+}
+
+/** Maps Power Fx Match.* enum patterns to a JS regex source; passes through raw regex. */
+function matchPattern(p: string): string {
+  const map: Record<string, string> = {
+    'Match.Email': "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", 'Email': "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+    'Match.Digit': "\\d", 'Match.Letter': "[A-Za-z]", 'Match.MultipleDigits': "\\d+",
+    'Match.Any': '.', 'Match.Hyphen': '-', 'Match.Period': '\\.', 'Match.Comma': ',',
+  };
+  return map[p] ?? p;
 }

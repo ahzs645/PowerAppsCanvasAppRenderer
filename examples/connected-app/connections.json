@@ -1,0 +1,19 @@
+{
+  "_comment": "Dropped alongside the app, this file becomes the active fake-connections config. The Tasks data source below backs the gallery; Office365Users is built in.",
+  "dataSources": {
+    "Tasks": {
+      "connector": "shared_sharepointonline",
+      "datasetName": "https://contoso.sharepoint.com/sites/team",
+      "tableName": "Tasks",
+      "primaryKey": "ID",
+      "idKind": "int",
+      "schema": { "ID": "Number", "Title": "Text", "Assignee": "Text", "Status": "Text", "DueDate": "DateTime", "Done": "Boolean" },
+      "rows": [
+        { "ID": 1, "Title": "Draft the proposal", "Assignee": "Ada Lovelace", "Status": "In progress", "DueDate": "2026-07-03", "Done": false },
+        { "ID": 2, "Title": "Book the venue", "Assignee": "Grace Hopper", "Status": "Not started", "DueDate": "2026-07-01", "Done": false },
+        { "ID": 3, "Title": "Send invites", "Assignee": "Alan Turing", "Status": "Not started", "DueDate": "2026-07-05", "Done": false },
+        { "ID": 4, "Title": "Finalize budget", "Assignee": "Ada Lovelace", "Status": "Done", "DueDate": "2026-06-22", "Done": true }
+      ]
+    }
+  }
+}

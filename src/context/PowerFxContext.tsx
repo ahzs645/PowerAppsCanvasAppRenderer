@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useRef, useState, useCallback, type ReactNode } from 'react';
 import { Evaluator, createStore, parseFormula, type Store, type Host } from '../utils/powerfx';
+import { applyConnectionsConfig, type ConnectionsConfig } from '../utils/connections';
 
 interface PowerFxContextValue {
     evaluate: (expression: string, self?: any, parent?: any, itemContext?: any) => any;
@@ -16,6 +17,7 @@ interface PowerFxProviderProps {
     onNavigate?: (screenName?: string) => void;
     onNotify?: (message: string) => void;
     onStart?: string | null;
+    connections?: ConnectionsConfig | null;
     currentUser?: {
         emailAddress?: string;
         fullName?: string;
@@ -23,14 +25,22 @@ interface PowerFxProviderProps {
     } | null;
 }
 
-export const PowerFxProvider: React.FC<PowerFxProviderProps> = ({ children, onNavigate, onNotify, onStart, currentUser }) => {
+export const PowerFxProvider: React.FC<PowerFxProviderProps> = ({ children, onNavigate, onNotify, onStart, connections, currentUser }) => {
     const storeRef = useRef<Store>(createStore());
     const [version, setTick] = useState(0);
     const startedRef = useRef<string | null>(null);
+    const seededRef = useRef(false);
 
     const user = currentUser
         ? { Email: currentUser.emailAddress || '', FullName: currentUser.fullName || '', Image: currentUser.imageUrl || '' }
         : { Email: 'mock@example.com', FullName: 'Mock User', Image: '' };
+
+    // Seed fake connections / data sources BEFORE App.OnStart runs, so OnStart
+    // (and first paint) can read data sources and connector responses.
+    if (!seededRef.current) {
+        seededRef.current = true;
+        applyConnectionsConfig(storeRef.current, connections, user);
+    }
 
     const host: Host = {
         navigate: onNavigate,
